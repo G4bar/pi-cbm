@@ -46,6 +46,7 @@ export class CbmClient {
     const child = spawn(binary, ["cli", "--json", toolName, JSON.stringify(args)], {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      env: resolveCbmEnvironment(),
     });
 
     let stdout = "";
@@ -97,4 +98,10 @@ export class CbmClient {
       options.signal?.removeEventListener("abort", kill);
     }
   }
+}
+
+function resolveCbmEnvironment(): NodeJS.ProcessEnv | undefined {
+  const cacheDirectory = process.env.PI_CBM_CACHE_DIR?.trim() || process.env.CBM_CACHE_DIR?.trim();
+  if (!cacheDirectory) return undefined;
+  return { ...process.env, CBM_CACHE_DIR: cacheDirectory };
 }

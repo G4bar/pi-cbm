@@ -1,6 +1,6 @@
 {
   "name": "pi-cbm",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "type": "module",
   "description": "Extension that exposes `codebase-memory-mcp` as native Pi tools, adds auto-indexing and deliberate obtimizations for agent-workflows and token saving.",
   "main": "./src/index.ts",
@@ -23,6 +23,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "check": "npm run typecheck",
     "prepack": "npm run check"
   },
@@ -32,7 +34,8 @@
     "@earendil-works/pi-tui": "^0.75.5",
     "@types/node": "^25.9.1",
     "typebox": "^1.1.38",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
