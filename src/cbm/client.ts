@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { formatSize } from "@earendil-works/pi-coding-agent";
 import { resolveCbmBinary } from "./binary.js";
 import { parseCbmEnvelope, parseMaybeJson } from "./envelope.js";
 import type { CbmCallOptions, CbmCallResult } from "./result.js";
 import { DEFAULT_QUERY_TIMEOUT_MS } from "./timeouts.js";
+import { formatSize } from "../shared/strings.js";
 
 const MAX_STDIO_BYTES = 50 * 1024 * 1024;
 
