@@ -61,3 +61,25 @@ describe("query_graph 0.12 shapes", () => {
     expect(data.has_more).toBe(false);
   });
 });
+
+describe("search_code paging argument mapping", () => {
+  it("sends result_offset and never a bare offset to cbm", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const service = queryServiceWith(async (_tool, args) => {
+      seen.push(args);
+      return {
+        ok: true,
+        data: { results: [], has_more: true, results_returned: 2, result_offset: args.result_offset, total_results: 44 },
+        rawText: "",
+        stderr: "",
+      };
+    });
+
+    const result = await service.executeQueryTool("Code search results", "search_code", { pattern: "ask_owner", limit: 2, offset: 2 }, CTX);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.result_offset).toBe(2);
+    expect(seen[0]!.offset).toBeUndefined();
+    expect(String((result.details.data as Record<string, unknown>).pagination_hint)).toContain("offset=4");
+  });
+});

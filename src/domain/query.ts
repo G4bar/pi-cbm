@@ -53,6 +53,12 @@ function withIndexFreshness(data: CbmData, freshness: IndexFreshness): CbmData {
   return { ...data, index_freshness: freshnessLine(freshness) };
 }
 
+/** cbm 0.12 `search_code` pages with `result_offset`; keep the agent-facing `offset` name. */
+function upstreamSearchCodeParams(params: Record<string, unknown>): Record<string, unknown> {
+  const { offset, ...rest } = params;
+  return offset === undefined ? rest : { ...rest, result_offset: offset };
+}
+
 export class QueryService {
   constructor(
     private readonly cbm: CbmClient,
@@ -69,7 +75,8 @@ export class QueryService {
     needsProject = true,
   ) {
     const upstreamParams = stripOutputControls(params);
-    const args = needsProject ? await this.withProject(upstreamParams, ctx) : removeUndefined(upstreamParams);
+    const toolParams = toolName === "search_code" ? upstreamSearchCodeParams(upstreamParams) : upstreamParams;
+    const args = needsProject ? await this.withProject(toolParams, ctx) : removeUndefined(toolParams);
     const project = typeof args.project === "string" ? args.project : "";
     // CLI-mode cbm indexes are not watched; re-index before impact analysis so an edit made moments ago is visible.
     const freshness = toolName === "detect_changes" && project ? await this.projects.ensureFreshIndex(project, ctx) : undefined;

@@ -92,6 +92,13 @@ auto-sync. 0.12 also exposes `index_repository --status` and `--async`
   0.12 returns the same `groups`/`cols:["name","hop"]` table shape (plus `callers_total`).
 - `search_code`: 0.9.0 `results:[{node,qualified_name,label,file,start_line,end_line,match_lines,context}]`;
   0.12 `cols`/`rows` with `qn,label,file,lines,matches,matches_omitted,in,out,context`.
+- `search_code` paging: 0.12 has no `offset` flag/key; results page with `result_offset`
+  (CLI `--result-offset`; `--result-limit`, `--raw-offset`/`--raw-limit`,
+  `--directory-offset`/`--directory-limit`, `--match-limit` are the other page flags).
+  A bare `offset` JSON key is silently ignored: live on 0.12.1
+  `{"offset":2}` returned page 0, while `{"result_offset":2}` moved the page. The pi
+  tool keeps the agent-facing `offset` and translates it to `result_offset` before
+  the CLI call (`QueryService.upstreamSearchCodeParams`).
 - `get_architecture.node_labels`: 0.9.0 array of `{label,count}`; 0.12 `{cols,rows}`.
 - `get_code_snippet`: 0.12 adds `source_mode`; both always report numeric
   `callers`/`callees` counts, and `include_neighbors: true` adds
