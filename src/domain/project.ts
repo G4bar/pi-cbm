@@ -12,6 +12,16 @@ const AUTO_INDEX_MODE = "full";
 const INDEX_FRESH_WINDOW_MS = 5_000;
 const LEASE_WAIT_RETRY_MS = 500;
 
+/** Budget for the whole forced `detect_changes` refresh: lease wait plus the index call. */
+const DEFAULT_FRESH_INDEX_TIMEOUT_MS = 30_000;
+
+function resolveFreshIndexTimeoutMs(): number {
+  const configured = process.env.PI_CBM_FRESH_INDEX_TIMEOUT_MS?.trim() || process.env.CBM_FRESH_INDEX_TIMEOUT_MS?.trim();
+  if (!configured) return DEFAULT_FRESH_INDEX_TIMEOUT_MS;
+  const parsed = Number(configured);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_FRESH_INDEX_TIMEOUT_MS;
+}
+
 /** Keep a missing `root_path` cached briefly so one failed lookup doesn't re-run per node in a batch. */
 const ROOT_PATH_MISS_TTL_MS = 30_000;
 
@@ -97,10 +107,28 @@ function waitForLease(ms: number, signal?: AbortSignal): Promise<boolean> {
   });
 }
 
+/** Bound a forced refresh by `timeoutMs` while still honouring a user/session abort. */
+function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort();
+  if (parent?.aborted) controller.abort();
+  else parent?.addEventListener("abort", onParentAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      parent?.removeEventListener("abort", onParentAbort);
+    },
+  };
+}
+
 export class ProjectService {
   private readonly rootPaths = new Map<string, Promise<string | undefined>>();
   private readonly rootPathMisses = new Map<string, number>();
   private readonly lastIndexFinishedAt = new Map<string, number>();
+  private readonly inflightIndexes = new Map<string, Promise<IndexFreshness>>();
   private projectsCache?: { at: number; value: CbmProject[] };
   private projectsInFlight?: Promise<CbmProject[]>;
   private projectsGeneration = 0;
@@ -354,13 +382,30 @@ export class ProjectService {
     return { ok: true, path: validation.path, source: "cwd" };
   }
 
-  async indexCurrentRepo(cwd: string, signal?: AbortSignal, options: { waitForLeaseMs?: number } = {}): Promise<IndexResult> {
+  async indexCurrentRepo(
+    cwd: string,
+    signal?: AbortSignal,
+    options: { waitForLeaseMs?: number; indexTimeoutMs?: number } = {},
+  ): Promise<IndexResult> {
     const target = await this.autoIndexTarget(cwd, signal);
     if (!target.ok) {
       return { status: "skipped", reason: target.reason };
     }
+    return this.indexPath(target.path, signal, options);
+  }
 
-    const coordination = await this.acquireIndexLease(target.path, signal, options.waitForLeaseMs);
+  /** Index an exact path (no git-root re-resolution); the `detect_changes` freshness path uses it. */
+  private async indexPath(
+    path: string,
+    signal: AbortSignal | undefined,
+    options: { waitForLeaseMs?: number; indexTimeoutMs?: number } = {},
+  ): Promise<IndexResult> {
+    const validation = validateAutoIndexPath(path);
+    if (!validation.ok) {
+      return { status: "skipped", reason: validation.reason };
+    }
+
+    const coordination = await this.acquireIndexLease(validation.path, signal, options.waitForLeaseMs);
     if (!coordination.ok) {
       return { status: "skipped", reason: coordination.reason };
     }
@@ -368,11 +413,11 @@ export class ProjectService {
     try {
       const result = await this.cbm.callTool(
         "index_repository",
-        { repo_path: target.path, mode: AUTO_INDEX_MODE },
-        { signal: coordination.lease.signal, timeoutMs: indexTimeoutMs(undefined) },
+        { repo_path: validation.path, mode: AUTO_INDEX_MODE },
+        { signal: coordination.lease.signal, timeoutMs: indexTimeoutMs(options.indexTimeoutMs) },
       );
       const data = result.data && typeof result.data === "object" ? (result.data as Record<string, unknown>) : {};
-      this.lastIndexFinishedAt.set(this.indexKey(target.path), Date.now());
+      this.lastIndexFinishedAt.set(this.indexKey(validation.path), Date.now());
       this.invalidateProjectCaches();
       return {
         status: "indexed",
@@ -408,20 +453,42 @@ export class ProjectService {
    * indexed within the freshness window. CLI-mode cbm indexes are not watched,
    * so a stale graph silently omits impacted symbols after an edit.
    */
-  async ensureFreshIndex(project: string, ctx: ToolExecutionContext): Promise<IndexFreshness | undefined> {
+  async ensureFreshIndex(project: string, ctx: ToolExecutionContext): Promise<IndexFreshness> {
     const root = await this.indexableProjectRoot(project, ctx.signal);
-    if (!root) return undefined;
+    if (!root) return { refreshed: false, reason: "project root not found on disk; index not refreshed" };
+
     const age = this.indexAgeMs(root);
     if (age !== undefined && age < INDEX_FRESH_WINDOW_MS) return { refreshed: true, age_ms: age };
 
-    let result: IndexResult;
+    const key = this.indexKey(root);
+    const existing = this.inflightIndexes.get(key);
+    if (existing) return existing;
+
+    const run = this.refreshIndex(root, ctx).finally(() => {
+      if (this.inflightIndexes.get(key) === run) this.inflightIndexes.delete(key);
+    });
+    this.inflightIndexes.set(key, run);
+    return run;
+  }
+
+  private async refreshIndex(root: string, ctx: ToolExecutionContext): Promise<IndexFreshness> {
+    const timeoutMs = resolveFreshIndexTimeoutMs();
+    const bounded = boundedSignal(ctx.signal, timeoutMs);
+    const timedOutReason = () => `timed out after ${Math.max(1, Math.round(timeoutMs / 1000))} s waiting for index`;
     try {
-      result = await this.indexCurrentRepo(root, ctx.signal, { waitForLeaseMs: indexTimeoutMs(undefined) });
+      const result = await this.indexPath(root, bounded.signal, { waitForLeaseMs: timeoutMs, indexTimeoutMs: timeoutMs });
+      if (ctx.signal?.aborted) throw new Error("codebase-memory-mcp detect_changes cancelled");
+      if (result.status !== "indexed") {
+        return { refreshed: false, reason: bounded.signal.aborted ? timedOutReason() : result.reason };
+      }
+      return { refreshed: true, age_ms: this.indexAgeMs(root) ?? 0 };
     } catch (error) {
+      if (ctx.signal?.aborted) throw error;
+      if (bounded.signal.aborted) return { refreshed: false, reason: timedOutReason() };
       return { refreshed: false, reason: error instanceof Error && error.message ? error.message : "index failed" };
+    } finally {
+      bounded.cleanup();
     }
-    if (result.status !== "indexed") return { refreshed: false, reason: result.reason };
-    return { refreshed: true, age_ms: this.indexAgeMs(root) ?? 0 };
   }
 
   /** Only index a project root that exists on disk; never guess an explicit project's path. */

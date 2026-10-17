@@ -107,7 +107,7 @@ describe("compact search_code output on cbm 0.12 tables", () => {
     expect(data.has_more).toBe(false);
   });
 
-  it("hints at the next page from results_returned/result_offset", async () => {
+  it("hints at the next page from results_returned/result_offset/total_results", async () => {
     const result = await new OutputService().buildCompactableToolResult(
       "Code search results",
       { results_returned: 3, result_offset: 0, total_results: 9, has_more: true, results: [] },
@@ -115,7 +115,9 @@ describe("compact search_code output on cbm 0.12 tables", () => {
       { tool: "search_code" },
     );
 
-    expect(String((result.details.data as Record<string, unknown>).pagination_hint)).toContain("offset=3");
+    const hint = String((result.details.data as Record<string, unknown>).pagination_hint);
+    expect(hint).toContain("offset=3");
+    expect(hint).toContain("showing 3 of 9");
   });
 });
 
@@ -157,6 +159,20 @@ describe("compact detect_changes output on cbm 0.12 shapes", () => {
     expect(impacted[0]!.file).toBe("src/domain/auto-index-paths.ts");
     expect(impacted[0]!.hop).toBe(1);
     expect(data.impacted_modules).toEqual([{ module: "src/domain", count: 23 }, { module: "src/cbm", count: 2 }]);
+    expect(data.impacted_total_relation).toBe("eq");
+    expect(data.module_total).toBe(2);
+    expect(data.module_has_more).toBe(false);
+  });
+
+  it("emits a truncation hint when impacted or changed pages have more", async () => {
+    const result = await new OutputService().buildCompactableToolResult(
+      "Change impact results",
+      { changed_files: [], impacted: [], impacted_has_more: true },
+      {},
+      { tool: "detect_changes" },
+    );
+
+    expect(String((result.details.data as Record<string, unknown>).truncation_hint)).toContain("More impacted symbols");
   });
 
   it("surfaces the freshness line", async () => {

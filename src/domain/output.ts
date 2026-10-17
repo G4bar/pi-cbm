@@ -305,7 +305,7 @@ function compactSearchGraphData(data: unknown): MetadataProjection {
 function paginationHint(data: Record<string, unknown>): string | undefined {
   if (data.has_more !== true && data.truncated !== true) return undefined;
   const returned = numberProp(data, "returned") ?? numberProp(data, "count") ?? numberProp(data, "results_returned");
-  const total = numberProp(data, "total");
+  const total = numberProp(data, "total") ?? numberProp(data, "total_results");
   const nextOffset =
     numberProp(data, "next_offset") ??
     (returned !== undefined ? (numberProp(data, "offset") ?? numberProp(data, "result_offset") ?? 0) + returned : undefined);
@@ -417,11 +417,15 @@ function compactSearchCodeData(data: unknown): MetadataProjection {
     "directories",
     "total_grep_matches",
     "total_results",
+    "total_relation",
     "raw_match_count",
     "dedup_ratio",
     "has_more",
+    "raw_has_more",
+    "directories_has_more",
     "truncated",
     "next_offset",
+    "result_offset",
     "limit",
     "offset",
     "returned",
@@ -510,9 +514,13 @@ function compactDetectChangesData(data: unknown): MetadataProjection {
     "changed_has_more",
     "seed_symbols",
     "impacted_total",
+    "impacted_total_relation",
     "impacted_shown",
     "impacted_has_more",
     "impacted_modules",
+    "module_total",
+    "module_returned",
+    "module_has_more",
     "depth",
     "risk",
     "summary",
@@ -522,6 +530,9 @@ function compactDetectChangesData(data: unknown): MetadataProjection {
   if (Array.isArray(data.impacted)) compact.impacted = compactSymbolArray(data.impacted.map(aliasImpactedRow));
   if (Array.isArray(data.impacted_symbols)) compact.impacted_symbols = compactSymbolArray(data.impacted_symbols);
   if (Array.isArray(data.impacts)) compact.impacts = compactSymbolArray(data.impacts);
+  if (data.impacted_has_more === true || data.changed_has_more === true) {
+    compact.truncation_hint = "More impacted symbols or changed files exist; narrow the change scope or raise the upstream limit.";
+  }
   return { data: appendMetadataHint(compact), pruned: true };
 }
 
