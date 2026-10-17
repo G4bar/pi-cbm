@@ -20,6 +20,12 @@ export type CbmVersionCheck = {
 
 const versionChecks = new Map<string, Promise<CbmVersionCheck>>();
 let pendingWarning: string | undefined;
+let detectedVersion: string | undefined;
+
+/** Last version string seen by a probe, for contract-error messages. */
+export function detectedCbmVersion(): string {
+  return detectedVersion ?? "unknown";
+}
 
 export function parseCbmVersion(output: string): CbmVersion | undefined {
   const match = /codebase-memory-mcp\s+v?(\d+)\.(\d+)\.(\d+)/.exec(output);
@@ -54,6 +60,7 @@ export function checkCbmVersion(binaryPath: string): Promise<CbmVersionCheck> {
     check = probeCbmVersion(binaryPath).then(({ check: result, retryable }) => {
       // Only cache definitive answers; a spawn error or timeout gets one retry per call.
       if (retryable) versionChecks.delete(binaryPath);
+      if (result.version) detectedVersion = result.version;
       if (result.warning && !pendingWarning) pendingWarning = result.warning;
       return result;
     });

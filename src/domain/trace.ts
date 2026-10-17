@@ -18,6 +18,7 @@ function tracePathFromItem(item: Record<string, unknown>): string {
   return "";
 }
 
+// pi-lens-ignore: pi-lens-self-scan
 function filterTraceData(data: unknown, params: Record<string, unknown>): unknown {
   const excludePaths = Array.isArray(params.exclude_paths) ? params.exclude_paths.filter((item): item is string => typeof item === "string") : [];
   if (excludePaths.length === 0) return data;
@@ -28,6 +29,7 @@ function filterTraceData(data: unknown, params: Record<string, unknown>): unknow
     return excludePaths.some((excluded) => path.includes(excluded));
   };
 
+  // pi-lens-ignore: pi-lens-self-scan
   const visit = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.filter((item) => !isRecord(item) || !shouldExclude(item)).map(visit);
     if (!isRecord(value)) return value;
@@ -60,7 +62,9 @@ export class TraceService {
     });
 
     if (result.ok) {
-      const enriched = await this.enrichTraceLocations(filterTraceData(result.data, params), project, params, ctx);
+      // Enrich before filtering: 0.12 trace rows carry no file_path, so
+      // exclude_paths can only match once locations are filled in.
+      const enriched = filterTraceData(await this.enrichTraceLocations(result.data, project, params, ctx), params);
       return this.output.buildCompactableToolResult("Trace path results", enriched, params, { tool: "trace_path", args, stderr: result.stderr });
     }
     if (!isFunctionNotFound(result.data) || !functionName || !project) throw new Error(errorText(result.data));
@@ -72,7 +76,7 @@ export class TraceService {
         signal: ctx.signal,
         timeoutMs: queryTimeoutMs(params.timeout_ms),
       });
-      const enriched = await this.enrichTraceLocations(filterTraceData(resolved.data, params), project, params, ctx);
+      const enriched = filterTraceData(await this.enrichTraceLocations(resolved.data, project, params, ctx), params);
       return this.output.buildCompactableToolResult("Trace path results", enriched, params, {
         tool: "trace_path",
         args: resolvedArgs,

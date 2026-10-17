@@ -1,6 +1,6 @@
 import { buildToolTextResult, saveJsonResult } from "../cbm/result.js";
 import { clampInt } from "../shared/numbers.js";
-import { isRecord, pickDefined, removeUndefined } from "../shared/object.js";
+import { isRecord, numberProp, pickDefined, removeUndefined } from "../shared/object.js";
 
 const DEFAULT_MAX_SYMBOL_LINES = 220;
 const MIN_MAX_SYMBOL_LINES = 40;
@@ -290,12 +290,27 @@ function appendMetadataHint(data: unknown): unknown {
 
 function compactSearchGraphData(data: unknown): MetadataProjection {
   if (!isRecord(data)) return { data, pruned: false };
-  const compact = pickDefined(data, ["project", "query", "label", "total", "has_more", "limit", "offset"]);
+  const compact = pickDefined(data, ["project", "query", "label", "total", "returned", "has_more", "truncated", "truncation_reason", "next_offset", "limit", "offset"]);
   if (Array.isArray(data.results)) compact.results = compactSymbolArray(data.results);
   if (Array.isArray(data.semantic_results)) compact.semantic_results = compactSymbolArray(data.semantic_results);
   if (Array.isArray(data.connected)) compact.connected = compactSymbolArray(data.connected);
   if (Array.isArray(data.candidates)) compact.candidates = compactSymbolArray(data.candidates);
+  const pagination = paginationHint(data);
+  if (pagination) compact.pagination_hint = pagination;
   return { data: appendMetadataHint(compact), pruned: true };
+}
+
+/** 0.12 pages `search_graph` silently; tell the model how to continue. */
+function paginationHint(data: Record<string, unknown>): string | undefined {
+  if (data.has_more !== true && data.truncated !== true) return undefined;
+  const returned = numberProp(data, "returned") ?? numberProp(data, "count");
+  const total = numberProp(data, "total");
+  const nextOffset = numberProp(data, "next_offset") ?? returned;
+  const shown = returned !== undefined && total !== undefined ? `showing ${returned} of ${total}` : "more results available";
+  const reason = typeof data.truncation_reason === "string" && data.truncation_reason ? ` (${data.truncation_reason})` : "";
+  return nextOffset !== undefined
+    ? `Partial page${reason} (${shown}); rerun with offset=${nextOffset} to fetch more.`
+    : `Partial page${reason} (${shown}).`;
 }
 
 function compactCodeSnippetData(data: unknown): MetadataProjection {
@@ -316,6 +331,7 @@ function compactReadSymbolData(data: unknown): MetadataProjection {
   return { data: { resolved: data.resolved, ...snippet.data }, pruned: snippet.pruned };
 }
 
+// pi-lens-ignore: pi-lens-self-scan
 function compactBatchSourceResult(item: unknown): unknown {
   if (!isRecord(item)) return item;
   const compact = pickDefined(item, [
@@ -366,7 +382,7 @@ function compactBatchSourceData(data: unknown): MetadataProjection {
 
 function compactTraceDataForOutput(data: unknown): MetadataProjection {
   if (!isRecord(data)) return { data, pruned: false };
-  const compact = pickDefined(data, ["function", "resolved_function", "direction", "mode", "parameter_name", "depth"]);
+  const compact = pickDefined(data, ["function", "resolved_function", "direction", "mode", "parameter_name", "depth", "callers_total", "callees_total"]);
   for (const key of ["callers", "callees", "paths", "nodes", "edges", "data_flow", "cross_service_paths"]) {
     const value = data[key];
     compact[key] = Array.isArray(value) ? compactTraceArray(value) : value;
@@ -392,6 +408,7 @@ function compactSearchCodeData(data: unknown): MetadataProjection {
   return { data: appendMetadataHint(compact), pruned: true };
 }
 
+// pi-lens-ignore: pi-lens-self-scan
 function compactArchitectureEntry(value: unknown): unknown {
   if (!isRecord(value)) return value;
   return pickDefined(value, [

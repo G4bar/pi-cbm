@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { CbmClient } from "../cbm/client.js";
 import { indexTimeoutMs } from "../cbm/timeouts.js";
 import { errorText } from "../shared/strings.js";
@@ -48,6 +48,8 @@ type AutoIndexTarget =
   | { ok: false; reason: string };
 
 export class ProjectService {
+  private readonly rootPaths = new Map<string, Promise<string | undefined>>();
+
   constructor(
     private readonly cbm: CbmClient,
     private readonly settings: AutoIndexSettings,
@@ -75,6 +77,43 @@ export class ProjectService {
     if (!result.ok && data?.error?.includes("cannot read cache directory")) return [];
     if (!result.ok) throw new Error(errorText(result.data));
     return Array.isArray(data.projects) ? data.projects : [];
+  }
+
+  /**
+   * cbm 0.12 `get_code_snippet` reports absolute `file_path`s while
+   * `search_graph` reports repo-relative ones. Rewrite the path-ish keys against
+   * the project's `root_path` so both agree; leave the value untouched when the
+   * project or a matching root is unknown.
+   */
+  async relativizePaths(data: Record<string, unknown>, project: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    if (!project) return data;
+    const keys = ["file_path", "file", "path"].filter((key) => typeof data[key] === "string" && isAbsolute(data[key] as string));
+    if (keys.length === 0) return data;
+
+    const root = await this.projectRootPath(project, signal);
+    if (!root) return data;
+
+    const prefix = `${root.replaceAll("\\", "/").replace(/\/+$/, "")}/`;
+    const result = { ...data };
+    for (const key of keys) {
+      const value = (data[key] as string).replaceAll("\\", "/");
+      if (value.startsWith(prefix)) result[key] = value.slice(prefix.length);
+    }
+    return result;
+  }
+
+  private projectRootPath(project: string, signal?: AbortSignal): Promise<string | undefined> {
+    const cached = this.rootPaths.get(project);
+    if (cached) return cached;
+
+    const request = this.listProjects(signal)
+      .then((projects) => projects.find((entry) => entry.name === project)?.root_path)
+      .catch(() => undefined);
+    this.rootPaths.set(project, request);
+    void request.then((root) => {
+      if (!root) this.rootPaths.delete(project);
+    });
+    return request;
   }
 
   async inferProject(cwd: string, signal?: AbortSignal): Promise<string> {

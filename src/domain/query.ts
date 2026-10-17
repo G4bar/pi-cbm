@@ -62,7 +62,9 @@ export class QueryService {
     const project = typeof args.project === "string" ? args.project : "";
     const data = project && (toolName === "search_graph" || toolName === "get_architecture" || toolName === "detect_changes")
       ? await this.trace.enrichTraceLocations(result.data, project, params, ctx)
-      : result.data;
+      : project && isRecord(result.data)
+        ? await this.projects.relativizePaths(result.data, project, ctx.signal)
+        : result.data;
     return this.output.buildCompactableToolResult(title, data, params, { tool: toolName, args, stderr: result.stderr });
   }
 
