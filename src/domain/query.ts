@@ -1,4 +1,5 @@
 import { CbmClient } from "../cbm/client.js";
+import type { CbmData } from "../cbm/normalize.js";
 import { queryTimeoutMs } from "../cbm/timeouts.js";
 import { isRecord, removeUndefined } from "../shared/object.js";
 import { OutputService, stripOutputControls } from "./output.js";
@@ -27,7 +28,7 @@ const NUMERIC_QUERY_COLUMNS = new Set([
   "depth",
 ]);
 
-function coerceQueryGraphMetrics(data: unknown): unknown {
+function coerceQueryGraphMetrics(data: CbmData): CbmData {
   if (!isRecord(data) || !Array.isArray(data.columns) || !Array.isArray(data.rows)) return data;
   const columns = data.columns.map((column) => (typeof column === "string" ? column.toLowerCase() : ""));
   const rows = data.rows.map((row) => {
@@ -71,7 +72,7 @@ export class QueryService {
   async queryGraph(params: Record<string, unknown>, ctx: ToolExecutionContext) {
     const args = await this.withProject(stripOutputControls({ max_rows: 200, ...params }), ctx);
     const result = await this.cbm.callTool("query_graph", args, { signal: ctx.signal, timeoutMs: queryTimeoutMs(params.timeout_ms) });
-    return this.output.buildCompactableToolResult("Cypher query results", coerceQueryGraphMetrics(result.data), params, {
+    return this.output.buildCompactableToolResult("Cypher query results", coerceQueryGraphMetrics(result.data as CbmData), params, {
       tool: "query_graph",
       args,
       stderr: result.stderr,

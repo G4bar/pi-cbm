@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import { CbmClient } from "../cbm/client.js";
 import { indexTimeoutMs } from "../cbm/timeouts.js";
 import { errorText } from "../shared/strings.js";
@@ -6,6 +6,9 @@ import { validateAutoIndexPath } from "./auto-index-paths.js";
 import type { IndexCoordinator } from "./index-coordinator.js";
 
 const AUTO_INDEX_MODE = "full";
+
+/** Keep a missing `root_path` cached briefly so one failed lookup doesn't re-run per node in a batch. */
+const ROOT_PATH_MISS_TTL_MS = 30_000;
 
 export type CbmProject = {
   name: string;
@@ -47,8 +50,14 @@ type AutoIndexTarget =
   | { ok: true; path: string; source: "git-root" | "cwd" }
   | { ok: false; reason: string };
 
+/** POSIX-absolute or Windows drive-letter absolute, on any host platform. */
+function isAbsolutePath(value: string): boolean {
+  return value.startsWith("/") || /^[a-z]:[\\/]/i.test(value);
+}
+
 export class ProjectService {
   private readonly rootPaths = new Map<string, Promise<string | undefined>>();
+  private readonly rootPathMisses = new Map<string, number>();
 
   constructor(
     private readonly cbm: CbmClient,
@@ -87,17 +96,21 @@ export class ProjectService {
    */
   async relativizePaths(data: Record<string, unknown>, project: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     if (!project) return data;
-    const keys = ["file_path", "file", "path"].filter((key) => typeof data[key] === "string" && isAbsolute(data[key] as string));
+    const keys = ["file_path", "file", "path"].filter((key) => typeof data[key] === "string" && isAbsolutePath(data[key] as string));
     if (keys.length === 0) return data;
 
     const root = await this.projectRootPath(project, signal);
     if (!root) return data;
 
-    const prefix = `${root.replaceAll("\\", "/").replace(/\/+$/, "")}/`;
+    const rootNormalized = root.replaceAll("\\", "/").replace(/\/+$/, "");
+    const caseInsensitive = /^[a-z]:/i.test(rootNormalized);
+    const comparableRoot = caseInsensitive ? rootNormalized.toLowerCase() : rootNormalized;
     const result = { ...data };
     for (const key of keys) {
-      const value = (data[key] as string).replaceAll("\\", "/");
-      if (value.startsWith(prefix)) result[key] = value.slice(prefix.length);
+      const value = data[key] as string;
+      const normalizedValue = value.replaceAll("\\", "/");
+      const comparableValue = caseInsensitive ? normalizedValue.toLowerCase() : normalizedValue;
+      if (comparableValue.startsWith(`${comparableRoot}/`)) result[key] = normalizedValue.slice(rootNormalized.length + 1);
     }
     return result;
   }
@@ -105,13 +118,17 @@ export class ProjectService {
   private projectRootPath(project: string, signal?: AbortSignal): Promise<string | undefined> {
     const cached = this.rootPaths.get(project);
     if (cached) return cached;
+    const missAt = this.rootPathMisses.get(project);
+    if (missAt !== undefined && Date.now() - missAt < ROOT_PATH_MISS_TTL_MS) return Promise.resolve(undefined);
 
     const request = this.listProjects(signal)
       .then((projects) => projects.find((entry) => entry.name === project)?.root_path)
       .catch(() => undefined);
     this.rootPaths.set(project, request);
     void request.then((root) => {
-      if (!root) this.rootPaths.delete(project);
+      if (root) return;
+      this.rootPaths.delete(project);
+      this.rootPathMisses.set(project, Date.now());
     });
     return request;
   }

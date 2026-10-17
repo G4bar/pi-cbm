@@ -2,7 +2,7 @@ import { isRecord } from "../shared/object.js";
 
 type Json = Record<string, unknown>;
 
-type CbmData = Json | CbmData[] | string | number | boolean | null | undefined;
+export type CbmData = Json | CbmData[] | string | number | boolean | null | undefined;
 
 const COLUMN_ALIASES: Record<string, string> = {
   qn: "qualified_name",

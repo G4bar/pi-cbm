@@ -45,5 +45,43 @@ describe("compact search_graph output on cbm 0.12 paging", () => {
     const line = withFallback.render(200).join(" ");
     expect(line).toContain("returned=3");
     expect(line).toContain("has_more");
+
+    const truncatedOnly = renderResult("search_graph")({ details: { data: { has_more: false, truncated: true } } }, undefined, theme);
+    expect(truncatedOnly.render(200).join(" ")).toContain("has_more");
+  });
+
+  it("derives the next offset from offset + returned when cbm omits next_offset", async () => {
+    const result = await new OutputService().buildCompactableToolResult(
+      "Graph search results",
+      { total: 61, returned: 3, offset: 5, has_more: true },
+      {},
+      { tool: "search_graph" },
+    );
+
+    expect(String((result.details.data as Record<string, unknown>).pagination_hint)).toContain("offset=8");
+  });
+});
+
+describe("compact trace output on cbm 0.12 shapes", () => {
+  it("surfaces totals, a shortfall hint, and the unlocated-node marker", async () => {
+    const result = await new OutputService().buildCompactableToolResult(
+      "Trace path results",
+      {
+        function: "callTool",
+        callers_total: 11,
+        callees_total: 6,
+        callers: [{ qualified_name: "a", file_path: "src/a.ts" }],
+        callees: [],
+        location_enrichment: { located: 50, unlocated: 10 },
+      },
+      {},
+      { tool: "trace_path" },
+    );
+
+    const data = result.details.data as Record<string, unknown>;
+    expect(data.callers_total).toBe(11);
+    expect(data.callees_total).toBe(6);
+    expect(String(data.truncation_hint)).toContain("callers 1/11");
+    expect(data.location_enrichment).toMatchObject({ unlocated: 10 });
   });
 });

@@ -29,17 +29,27 @@ function fixture(name: string): CbmCallResult {
   return { ok: envelope.isError !== true, data: normalizeCbmData(parsed), rawText: text, stderr: "" };
 }
 
-function fakeClient(handler: (tool: string, args: Record<string, unknown>) => CbmCallResult): CbmClient {
+function fakeClient(
+  handler: (tool: string, args: Record<string, unknown>) => CbmCallResult,
+  projects: CbmCallResult = fixture("list_projects.format-flag"),
+): CbmClient {
   return {
-    callTool: async (tool: string, args: Record<string, unknown>) =>
-      tool === "list_projects" ? fixture("list_projects.format-flag") : handler(tool, args),
+    callTool: async (tool: string, args: Record<string, unknown>) => (tool === "list_projects" ? projects : handler(tool, args)),
   } as unknown as CbmClient;
 }
 
-function serviceWith(handler: (tool: string, args: Record<string, unknown>) => CbmCallResult): SymbolService {
-  const cbm = fakeClient(handler);
-  const projects = new ProjectService(cbm, { autoIndexNonGitDirectories: false }, {} as IndexCoordinator);
-  return new SymbolService(cbm, projects, new OutputService());
+function serviceWith(handler: (tool: string, args: Record<string, unknown>) => CbmCallResult, projects?: CbmCallResult): SymbolService {
+  const cbm = fakeClient(handler, projects);
+  const projectService = new ProjectService(cbm, { autoIndexNonGitDirectories: false }, {} as IndexCoordinator);
+  return new SymbolService(cbm, projectService, new OutputService());
+}
+
+function snippetResult(data: Record<string, unknown>): CbmCallResult {
+  return { ok: true, data, rawText: "", stderr: "" };
+}
+
+function projectsResult(name: string, rootPath?: string): CbmCallResult {
+  return { ok: true, data: { projects: [{ name, root_path: rootPath }], total: 1, has_more: false }, rawText: "", stderr: "" };
 }
 
 const searchByName = () => fixture("search_graph.name-pattern");
@@ -100,5 +110,127 @@ describe("SymbolService on cbm 0.12 shapes", () => {
     const data = read.details.data as Record<string, unknown>;
     expect(data.file_path).toBe("src/cbm/client.ts");
     expect(JSON.stringify(data)).not.toContain(ROOT);
+  });
+
+  it("surfaces a failed search_graph lookup instead of reporting symbol-not-found", async () => {
+    const service = serviceWith(() => fixture("search_graph.unknown-project"));
+
+    await expect(service.resolveCandidates({ name: "callTool", project: "no-such-project" }, CTX)).rejects.toThrow(
+      /project not found or not indexed.*available_projects: tmp-cbm-fixture-repo/,
+    );
+  });
+
+  it("tolerates a partial search_graph failure", async () => {
+    const service = serviceWith((tool, args) => (args.query ? fixture("search_graph.unknown-project") : searchByName()));
+    const resolution = await service.resolveCandidates({ name: "callTool", project: PROJECT }, CTX);
+
+    expect(resolution.candidates).toHaveLength(1);
+  });
+
+  it("requests extra search_graph fields for disambiguation", async () => {
+    const searches: Record<string, unknown>[] = [];
+    const service = serviceWith((tool, args) => {
+      if (tool === "search_graph") searches.push(args);
+      return searchByName();
+    });
+
+    await service.resolveCandidates({ name: "callTool", project: PROJECT }, CTX);
+
+    expect(searches.length).toBeGreaterThan(0);
+    expect(searches.every((args) => Array.isArray(args.fields) && (args.fields as string[]).includes("parent_class"))).toBe(true);
+  });
+
+  it("fails closed on an ambiguous name without reading source", async () => {
+    const tools: string[] = [];
+    const service = serviceWith((tool) => {
+      tools.push(tool);
+      return fixture("search_graph.label");
+    });
+
+    const result = await service.read({ name: "missing", project: PROJECT }, CTX);
+    const data = result.details.data as Record<string, unknown>;
+    expect(data.ambiguous).toBe(true);
+    expect(data.candidates).toHaveLength(3);
+    expect(tools).not.toContain("get_code_snippet");
+  });
+
+  it("filters parent_class as a short name and as the full qualified prefix", async () => {
+    const service = serviceWith(() => fixture("search_graph.fields"));
+
+    const short = await service.resolveCandidates({ name: "callTool", parent_class: "CbmClient", project: PROJECT }, CTX);
+    expect(short.candidates).toHaveLength(1);
+
+    const full = await service.resolveCandidates(
+      { name: "callTool", parent_class: "tmp-cbm-fixture-repo.src.cbm.client.CbmClient", project: PROJECT },
+      CTX,
+    );
+    expect(full.candidates).toHaveLength(1);
+
+    const none = await service.resolveCandidates({ name: "callTool", parent_class: "Other", project: PROJECT }, CTX);
+    expect(none.candidates).toHaveLength(0);
+  });
+
+  it("reads a batch of symbols with repo-relative snippet paths", async () => {
+    const service = serviceWith((tool) => (tool === "get_code_snippet" ? fixture("get_code_snippet.known") : searchByName()));
+    const result = await service.readMany({ symbols: [{ name: "callTool" }], project: PROJECT }, CTX);
+    const results = (result.details.data as { results: Array<Record<string, unknown>> }).results;
+
+    expect(results[0]).toMatchObject({ status: "ok" });
+    expect((results[0]!.snippet as Record<string, unknown>).file_path).toBe("src/cbm/client.ts");
+  });
+
+  it("searches and reads in one call with repo-relative snippet paths", async () => {
+    const service = serviceWith((tool) => (tool === "get_code_snippet" ? fixture("get_code_snippet.known") : searchByName()));
+    const result = await service.searchAndRead({ query: "callTool", project: PROJECT }, CTX);
+    const results = (result.details.data as { results: Array<Record<string, unknown>> }).results;
+
+    expect(results[0]).toMatchObject({ status: "ok", qualified_name: "tmp-cbm-fixture-repo.src.cbm.client.CbmClient.callTool" });
+    expect((results[0]!.snippet as Record<string, unknown>).file_path).toBe("src/cbm/client.ts");
+  });
+
+  it("rewrites a Windows drive-letter path case-insensitively", async () => {
+    const service = serviceWith(
+      () => snippetResult({ name: "x", qualified_name: "q", label: "Function", file_path: "c:/repo/src/a.ts", start_line: 1, end_line: 2 }),
+      projectsResult("win", "C:\\Repo"),
+    );
+
+    const location = await service.fetchSymbolLocation("q", "win", CTX, {}, new Map());
+    expect(location.file_path).toBe("src/a.ts");
+  });
+
+  it("leaves a path outside the project root absolute", async () => {
+    const service = serviceWith(() => snippetResult({ name: "x", qualified_name: "q", file_path: "/elsewhere/src/a.ts", start_line: 1, end_line: 2 }));
+
+    const location = await service.fetchSymbolLocation("q", PROJECT, CTX, {}, new Map());
+    expect(location.file_path).toBe("/elsewhere/src/a.ts");
+  });
+
+  it("leaves the path absolute when the project root cannot be resolved", async () => {
+    const service = serviceWith(
+      () => snippetResult({ name: "x", qualified_name: "q", file_path: "/tmp/cbm-fixture-repo/src/a.ts", start_line: 1, end_line: 2 }),
+      { ok: false, data: { error: "cannot read cache directory: /missing" }, rawText: "", stderr: "" },
+    );
+
+    const location = await service.fetchSymbolLocation("q", PROJECT, CTX, {}, new Map());
+    expect(location.file_path).toBe("/tmp/cbm-fixture-repo/src/a.ts");
+  });
+
+  it("reuses a missing-root lookup within the miss TTL", async () => {
+    let listCalls = 0;
+    const cbm = {
+      callTool: async (tool: string) => {
+        if (tool === "list_projects") {
+          listCalls += 1;
+          return { ok: true, data: { projects: [], total: 0, has_more: false }, rawText: "", stderr: "" };
+        }
+        return snippetResult({ name: "x", qualified_name: "q", file_path: "/abs/a.ts", start_line: 1, end_line: 2 });
+      },
+    } as unknown as CbmClient;
+    const projectService = new ProjectService(cbm, { autoIndexNonGitDirectories: false }, {} as IndexCoordinator);
+
+    await projectService.relativizePaths({ file_path: "/abs/a.ts" }, "missing");
+    await projectService.relativizePaths({ file_path: "/abs/a.ts" }, "missing");
+
+    expect(listCalls).toBe(1);
   });
 });

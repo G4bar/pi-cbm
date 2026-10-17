@@ -4,7 +4,7 @@ import { detectedCbmVersion } from "../cbm/version.js";
 import { mapLimit } from "../shared/concurrency.js";
 import { clampInt } from "../shared/numbers.js";
 import { isRecord, numberProp, removeUndefined, stringProp } from "../shared/object.js";
-import { errorText, escapeRegExp, normalizeForMatch } from "../shared/strings.js";
+import { errorText, errorTextWithDetails, escapeRegExp, normalizeForMatch } from "../shared/strings.js";
 import { OutputService, stripOutputControls } from "./output.js";
 import { ProjectService, type ToolExecutionContext } from "./project.js";
 
@@ -348,6 +348,10 @@ export class SymbolService {
 
     const candidates = results.flatMap((result) => (result.ok ? allSearchCandidates(result.data) : []));
     const stderr = results.map((result) => result.stderr).join("");
+
+    // Every lookup failing is a cbm/contract error (bad project, bad regex, ...),
+    // not an empty result set. Partial failures are tolerated.
+    if (results.every((result) => !result.ok)) throw new Error(errorTextWithDetails(results[0]!.data));
 
     const deduped = dedupeCandidates(candidates);
     const filtered = filterCandidates(deduped, args).slice(0, limit);

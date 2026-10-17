@@ -17,7 +17,7 @@ export function renderResult(label: string) {
     const total = typeof data?.total === "number" ? data.total : undefined;
     if (total !== undefined) bits.push(theme.fg("muted", `total=${total}`));
     else if (typeof data?.returned === "number") bits.push(theme.fg("muted", `returned=${data.returned}`));
-    const hasMore = typeof data?.has_more === "boolean" ? data.has_more : data?.truncated === true;
+    const hasMore = data?.has_more === true || data?.truncated === true;
     if (hasMore) bits.push(theme.fg("warning", "has_more"));
     if (details.fullOutputPath) bits.push(theme.fg("warning", `full=${String(details.fullOutputPath)}`));
     if (details.uncompactedOutputPath) bits.push(theme.fg("warning", `uncompacted=${String(details.uncompactedOutputPath)}`));

@@ -1,4 +1,5 @@
 import { buildToolTextResult, saveJsonResult } from "../cbm/result.js";
+import type { CbmData } from "../cbm/normalize.js";
 import { clampInt } from "../shared/numbers.js";
 import { isRecord, numberProp, pickDefined, removeUndefined } from "../shared/object.js";
 
@@ -140,7 +141,7 @@ function compactCodeBlock(value: string, container: Record<string, unknown>, con
 function compactSymbolBlocks(value: unknown, controls: OutputControls): CompactionResult {
   let compacted = false;
 
-  const visit = (entry: unknown, container: Record<string, unknown> | undefined, key: string | undefined): unknown => {
+  const visit = (entry: CbmData, container: Record<string, unknown> | undefined, key: string | undefined): CbmData => {
     if (typeof entry === "string" && container && key && isCompactibleCodeKey(key)) {
       const block = compactCodeBlock(entry, container, controls);
       if (!block) return entry;
@@ -195,12 +196,12 @@ function compactSymbolBlocks(value: unknown, controls: OutputControls): Compacti
 
     const clone: Record<string, unknown> = { ...entry };
     for (const [childKey, childValue] of Object.entries(clone)) {
-      clone[childKey] = visit(childValue, clone, childKey);
+      clone[childKey] = visit(childValue as CbmData, clone, childKey);
     }
     return clone;
   };
 
-  return { data: visit(value, undefined, undefined), compacted };
+  return { data: visit(value as CbmData, undefined, undefined), compacted };
 }
 
 type MetadataProjection = {
@@ -208,7 +209,7 @@ type MetadataProjection = {
   pruned: boolean;
 };
 
-function firstDocLine(value: unknown): unknown {
+function firstDocLine(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const line = value
     .split(/\r?\n/)
@@ -218,7 +219,7 @@ function firstDocLine(value: unknown): unknown {
 }
 
 
-function compactSymbolLike(item: unknown, options: { includeSource?: boolean; includeMatches?: boolean } = {}): unknown {
+function compactSymbolLike(item: CbmData, options: { includeSource?: boolean; includeMatches?: boolean } = {}): CbmData {
   if (!isRecord(item)) return item;
   const compact = pickDefined(item, [
     "name",
@@ -260,12 +261,12 @@ function compactSymbolLike(item: unknown, options: { includeSource?: boolean; in
   return compact;
 }
 
-function compactSymbolArray(value: unknown, options: { includeSource?: boolean; includeMatches?: boolean } = {}): unknown {
+function compactSymbolArray(value: CbmData, options: { includeSource?: boolean; includeMatches?: boolean } = {}): CbmData {
   if (!Array.isArray(value)) return value;
   return value.map((item) => compactSymbolLike(item, options));
 }
 
-function compactTraceItem(item: unknown): unknown {
+function compactTraceItem(item: CbmData): CbmData {
   if (!isRecord(item)) return item;
   const compact = compactSymbolLike(item);
   if (!isRecord(compact)) return compact;
@@ -277,12 +278,12 @@ function compactTraceItem(item: unknown): unknown {
   return compact;
 }
 
-function compactTraceArray(value: unknown): unknown {
+function compactTraceArray(value: CbmData): CbmData {
   if (!Array.isArray(value)) return value;
   return value.map(compactTraceItem);
 }
 
-function appendMetadataHint(data: unknown): unknown {
+function appendMetadataHint(data: CbmData): CbmData {
   const hint = "Compact result: less-useful graph metadata is hidden. Rerun with include_metadata=true for full upstream metrics/raw fields.";
   if (isRecord(data) && data._metadata_hint === undefined) return { ...data, _metadata_hint: hint };
   return data;
@@ -305,7 +306,7 @@ function paginationHint(data: Record<string, unknown>): string | undefined {
   if (data.has_more !== true && data.truncated !== true) return undefined;
   const returned = numberProp(data, "returned") ?? numberProp(data, "count");
   const total = numberProp(data, "total");
-  const nextOffset = numberProp(data, "next_offset") ?? returned;
+  const nextOffset = numberProp(data, "next_offset") ?? (returned !== undefined ? (numberProp(data, "offset") ?? 0) + returned : undefined);
   const shown = returned !== undefined && total !== undefined ? `showing ${returned} of ${total}` : "more results available";
   const reason = typeof data.truncation_reason === "string" && data.truncation_reason ? ` (${data.truncation_reason})` : "";
   return nextOffset !== undefined
@@ -331,8 +332,7 @@ function compactReadSymbolData(data: unknown): MetadataProjection {
   return { data: { resolved: data.resolved, ...snippet.data }, pruned: snippet.pruned };
 }
 
-// pi-lens-ignore: pi-lens-self-scan
-function compactBatchSourceResult(item: unknown): unknown {
+function compactBatchSourceResult(item: CbmData): CbmData {
   if (!isRecord(item)) return item;
   const compact = pickDefined(item, [
     "index",
@@ -382,11 +382,28 @@ function compactBatchSourceData(data: unknown): MetadataProjection {
 
 function compactTraceDataForOutput(data: unknown): MetadataProjection {
   if (!isRecord(data)) return { data, pruned: false };
-  const compact = pickDefined(data, ["function", "resolved_function", "direction", "mode", "parameter_name", "depth", "callers_total", "callees_total"]);
+  const compact = pickDefined(data, [
+    "function",
+    "resolved_function",
+    "direction",
+    "mode",
+    "parameter_name",
+    "depth",
+    "callers_total",
+    "callees_total",
+    "location_enrichment",
+  ]);
   for (const key of ["callers", "callees", "paths", "nodes", "edges", "data_flow", "cross_service_paths"]) {
     const value = data[key];
     compact[key] = Array.isArray(value) ? compactTraceArray(value) : value;
   }
+  const shortfalls: string[] = [];
+  for (const [key, totalKey] of [["callers", "callers_total"], ["callees", "callees_total"]] as const) {
+    const rows = data[key];
+    const total = numberProp(data, totalKey);
+    if (Array.isArray(rows) && total !== undefined && total > rows.length) shortfalls.push(`${key} ${rows.length}/${total}`);
+  }
+  if (shortfalls.length > 0) compact.truncation_hint = `Fewer rows than upstream totals (${shortfalls.join(", ")}); rows may be paged or removed by exclude_paths.`;
   return { data: appendMetadataHint(removeUndefined(compact)), pruned: true };
 }
 
@@ -408,8 +425,7 @@ function compactSearchCodeData(data: unknown): MetadataProjection {
   return { data: appendMetadataHint(compact), pruned: true };
 }
 
-// pi-lens-ignore: pi-lens-self-scan
-function compactArchitectureEntry(value: unknown): unknown {
+function compactArchitectureEntry(value: CbmData): CbmData {
   if (!isRecord(value)) return value;
   return pickDefined(value, [
     "name",
