@@ -158,7 +158,7 @@ export const toolDefinitions: ToolDefinition[] = [
       "If an oversized symbol is compacted, retry get_code_snippet with a higher max_symbol_lines or full_output=true before using read.",
     ],
     parameters: Type.Object({
-      qualified_name: Type.String({ description: "Full qualified_name from search_graph, or a short name if unambiguous." }),
+      qualified_name: Type.String({ description: "Full qualified_name from a graph search, or a short name if unambiguous." }),
       project: OPTIONAL_PROJECT,
       include_neighbors: Type.Optional(Type.Boolean()),
       ...EXPLORATION_OUTPUT_CONTROL_PARAMS,

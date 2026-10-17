@@ -1,9 +1,10 @@
 import { Text } from "@earendil-works/pi-tui";
+import { prefixedToolName } from "../shared/tool-prefix.js";
 
 export function renderCall(label: string, pick: (args: Record<string, unknown>) => string | undefined = () => undefined) {
   return (args: Record<string, unknown>, theme: any) => {
     const suffix = pick(args);
-    return new Text(`${theme.fg("toolTitle", theme.bold(`${label} `))}${suffix ? theme.fg("accent", suffix) : ""}`, 0, 0);
+    return new Text(`${theme.fg("toolTitle", theme.bold(`${prefixedToolName(label)} `))}${suffix ? theme.fg("accent", suffix) : ""}`, 0, 0);
   };
 }
 
@@ -12,7 +13,7 @@ export function renderResult(label: string) {
     const details = result.details ?? {};
     const args = details.args as Record<string, unknown> | undefined;
     const data = details.data as Record<string, unknown> | undefined;
-    const bits: string[] = [theme.fg("success", `✓ ${label}`)];
+    const bits: string[] = [theme.fg("success", `✓ ${prefixedToolName(label)}`)];
     if (args?.project) bits.push(theme.fg("muted", `project=${String(args.project)}`));
     const total = typeof data?.total === "number" ? data.total : undefined;
     if (total !== undefined) bits.push(theme.fg("muted", `total=${total}`));

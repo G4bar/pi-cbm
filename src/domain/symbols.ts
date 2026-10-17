@@ -5,6 +5,7 @@ import { mapLimit } from "../shared/concurrency.js";
 import { clampInt } from "../shared/numbers.js";
 import { isRecord, numberProp, removeUndefined, stringProp } from "../shared/object.js";
 import { errorText, escapeRegExp, normalizeForMatch } from "../shared/strings.js";
+import { prefixedToolName } from "../shared/tool-prefix.js";
 import { OutputService, stripOutputControls } from "./output.js";
 import { ProjectService, type ToolExecutionContext } from "./project.js";
 
@@ -232,7 +233,7 @@ function renderSymbolResolution(resolution: SymbolResolution, params: Record<str
       query: resolution.query,
       total_candidates: 0,
       considered_candidates: resolution.consideredCandidates,
-      hint: "Try search_graph with a broader query or fewer disambiguators.",
+      hint: `Try ${prefixedToolName("search_graph")} with a broader query or fewer disambiguators.`,
     };
   }
 
@@ -334,7 +335,7 @@ export class SymbolService {
       searches.push({ query: name });
     }
 
-    if (searches.length === 0) throw new Error("resolve_symbol/read_symbol requires name or qualified_name.");
+    if (searches.length === 0) throw new Error(`${prefixedToolName("resolve_symbol")}/${prefixedToolName("read_symbol")} requires name or qualified_name.`);
 
     const results = await Promise.all(
       searches.map((search) =>
@@ -469,7 +470,7 @@ export class SymbolService {
   }
 
   async searchAndRead(params: Record<string, unknown>, ctx: ToolExecutionContext) {
-    if (!hasSearchInput(params)) throw new Error("search_and_read_symbols requires query, name_pattern, qn_pattern, file_pattern, or semantic_query.");
+    if (!hasSearchInput(params)) throw new Error(`${prefixedToolName("search_and_read_symbols")} requires query, name_pattern, qn_pattern, file_pattern, or semantic_query.`);
 
     const searchLimit = clampInt(params.search_limit ?? params.limit, 12, 1, MAX_SEARCH_LIMIT);
     const readLimit = clampInt(params.read_limit, Math.min(searchLimit, 8), 1, MAX_SEARCH_AND_READ);
@@ -589,7 +590,7 @@ export class SymbolService {
         status: "not_found",
         query: resolution.query,
         considered_candidates: resolution.consideredCandidates,
-        hint: "Try search_graph with a broader query or fewer disambiguators.",
+        hint: `Try ${prefixedToolName("search_graph")} with a broader query or fewer disambiguators.`,
         stderr: resolution.stderr,
       };
     }
@@ -659,7 +660,7 @@ export class SymbolService {
       return {
         data: {
           neighbors_error: errorText(trace.data),
-          neighbors_hint: "Direct neighbor lookup failed; use trace_path for explicit caller/callee tracing.",
+          neighbors_hint: `Direct neighbor lookup failed; use ${prefixedToolName("trace_path")} for explicit caller/callee tracing.`,
         },
         stderr: trace.stderr,
       };
@@ -678,7 +679,7 @@ export class SymbolService {
         callees,
         caller_count: callers?.length,
         callee_count: callees?.length,
-        neighbors_hint: "Neighbors are direct-only, compact, and source-free. Use trace_path for multi-hop workflow or impact tracing.",
+        neighbors_hint: `Neighbors are direct-only, compact, and source-free. Use ${prefixedToolName("trace_path")} for multi-hop workflow or impact tracing.`,
       }),
       stderr: trace.stderr,
     };

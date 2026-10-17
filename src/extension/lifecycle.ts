@@ -1,6 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { consumeCbmVersionWarning } from "../cbm/version.js";
 import type { CbmServices } from "../pi-tools/definitions.js";
-import { CODEBASE_MEMORY_PROMPT } from "./prompt.js";
+import { selectedToolNames } from "../pi-tools/registry.js";
+import { codebaseMemoryPrompt } from "./prompt.js";
 
 const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 60_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -63,12 +65,16 @@ export function registerLifecycle(pi: ExtensionAPI, services: CbmServices) {
       session.ui.setStatus("codebase-memory", `cbm index failed${reason}`);
     } finally {
       if (inFlightGeneration === generation) inFlightGeneration = undefined;
+      const warning = generation === sessionGeneration ? consumeCbmVersionWarning() : undefined;
+      if (warning) session.ui.setStatus("codebase-memory", warning);
     }
   }
 
-  pi.on("before_agent_start", async (event) => ({
-    systemPrompt: event.systemPrompt + CODEBASE_MEMORY_PROMPT,
-  }));
+  pi.on("before_agent_start", (event) => {
+    const active = new Set(pi.getActiveTools());
+    if (!selectedToolNames().some((name) => active.has(name))) return;
+    return { systemPrompt: event.systemPrompt + codebaseMemoryPrompt() };
+  });
 
   pi.on("session_start", (_event, ctx) => {
     const session = readSessionResources(ctx);
