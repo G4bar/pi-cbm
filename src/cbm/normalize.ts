@@ -26,6 +26,7 @@ function normalizeValue(value: unknown): CbmData {
   if (!isRecord(value)) return value as CbmData;
 
   if (isPagedGroupsTable(value)) return normalizePagedGroups(value);
+  if (isPagedRowsTable(value)) return normalizePagedRows(value);
   if (isGroupsTable(value)) return expandGroups(value);
   if (isRowsTable(value)) return expandRows(value);
 
@@ -44,6 +45,22 @@ function isPagedGroupsTable(value: Json): boolean {
 
 function isRowsTable(value: Json): boolean {
   return Array.isArray(value.cols) && Array.isArray(value.rows);
+}
+
+// A table with sibling paging/meta keys is promoted to `results` so those keys survive;
+// a bare `{cols, rows}` table (node_labels, raw_matches, ...) collapses to an array.
+function isPagedRowsTable(value: Json): boolean {
+  return isRowsTable(value) && Object.keys(value).some((key) => key !== "cols" && key !== "rows");
+}
+
+function normalizePagedRows(value: Json): Json {
+  const result: Json = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "cols" || key === "rows") continue;
+    result[key] = normalizeValue(entry);
+  }
+  result.results = expandRows(value);
+  return result;
 }
 
 function normalizePagedGroups(value: Json): Json {
@@ -96,7 +113,7 @@ function rowToObject(columns: unknown[], row: unknown): Json {
 
 function applyAliases(item: Json): Json {
   for (const [from, to] of Object.entries(COLUMN_ALIASES)) {
-    if (item[to] === undefined && item[from] !== undefined) item[to] = item[from];
+    if (item[to] === undefined && item[from] != null) item[to] = item[from];
   }
   if (typeof item.lines === "string") {
     const match = /^(\d+)\s*-\s*(\d+)$/.exec(item.lines.trim());

@@ -50,6 +50,7 @@ export class CbmClient {
     }
 
     // 0.12 ignores `format` on stdin for list_projects, so that one uses the flag and no stdin.
+    // list_projects currently takes no args, so any caller args are dropped on this path.
     const argv = ["cli", "--json", toolName];
     let stdin: string | undefined;
     if (toolName === "list_projects") {
@@ -57,6 +58,8 @@ export class CbmClient {
     } else {
       stdin = JSON.stringify({ format: "json", ...args });
     }
+
+    if (options.signal?.aborted) throw new Error(`codebase-memory-mcp ${toolName} cancelled`);
 
     const timeoutMs = options.timeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS;
     const child = spawn(binary, argv, {

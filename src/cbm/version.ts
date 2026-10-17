@@ -51,7 +51,9 @@ export function checkCbmVersion(binaryPath: string): Promise<CbmVersionCheck> {
 
   let check = versionChecks.get(binaryPath);
   if (!check) {
-    check = probeCbmVersion(binaryPath).then((result) => {
+    check = probeCbmVersion(binaryPath).then(({ check: result, retryable }) => {
+      // Only cache definitive answers; a spawn error or timeout gets one retry per call.
+      if (retryable) versionChecks.delete(binaryPath);
       if (result.warning && !pendingWarning) pendingWarning = result.warning;
       return result;
     });
@@ -67,28 +69,28 @@ export function consumeCbmVersionWarning(): string | undefined {
   return warning;
 }
 
-function probeCbmVersion(binaryPath: string): Promise<CbmVersionCheck> {
+function probeCbmVersion(binaryPath: string): Promise<{ check: CbmVersionCheck; retryable: boolean }> {
   return new Promise((resolve) => {
     let stdout = "";
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
-    const finish = (result: CbmVersionCheck) => {
+    const finish = (result: CbmVersionCheck, retryable: boolean) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      resolve(result);
+      resolve({ check: result, retryable });
     };
 
     const child = spawn(binaryPath, ["--version"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     timer = setTimeout(() => {
       child.kill("SIGTERM");
-      finish({ status: "unknown", warning: UNPARSEABLE_WARNING });
+      finish({ status: "unknown", warning: UNPARSEABLE_WARNING }, true);
     }, VERSION_PROBE_TIMEOUT_MS);
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
     });
-    child.on("error", () => finish(evaluateCbmVersion(undefined)));
-    child.on("close", () => finish(evaluateCbmVersion(parseCbmVersion(stdout))));
+    child.on("error", () => finish(evaluateCbmVersion(undefined), true));
+    child.on("close", () => finish(evaluateCbmVersion(parseCbmVersion(stdout)), false));
   });
 }

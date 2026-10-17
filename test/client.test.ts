@@ -52,14 +52,30 @@ class FakeChildProcess extends EventEmitter {
 
 type SpawnCall = { args: string[]; child: FakeChildProcess };
 
-function stubSpawn(text: string): SpawnCall[] {
+function stubSpawn(text: string, options: { code?: number; isError?: boolean } = {}): SpawnCall[] {
   const calls: SpawnCall[] = [];
-  spawnControl.spy.mockImplementationOnce((_command: string, args: string[], options: { stdio?: unknown }) => {
-    const stdio = options?.stdio;
+  spawnControl.spy.mockImplementationOnce((_command: string, args: string[], spawnOptions: { stdio?: unknown }) => {
+    const stdio = spawnOptions?.stdio;
     const child = new FakeChildProcess(Array.isArray(stdio) && stdio[0] === "pipe");
     calls.push({ args, child });
     queueMicrotask(() => {
-      child.stdout.emit("data", Buffer.from(JSON.stringify({ content: [{ type: "text", text }] })));
+      const envelope = { content: [{ type: "text", text }] } as { content: Array<{ type: string; text: string }>; isError?: boolean };
+      if (options.isError) envelope.isError = true;
+      child.stdout.emit("data", Buffer.from(JSON.stringify(envelope)));
+      child.emit("close", options.code ?? 0, null);
+    });
+    return child as unknown as ChildProcess;
+  });
+  return calls;
+}
+
+function stubVersionSpawn(output: string): SpawnCall[] {
+  const calls: SpawnCall[] = [];
+  spawnControl.spy.mockImplementationOnce((_command: string, args: string[]) => {
+    const child = new FakeChildProcess(false);
+    calls.push({ args, child });
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from(output));
       child.emit("close", 0, null);
     });
     return child as unknown as ChildProcess;
@@ -143,5 +159,47 @@ describe("CbmClient CLI transport", () => {
     await new CbmClient().callTool("search_code", { format: "text", pattern: "callTool" });
 
     expect(JSON.parse(calls[0].child.stdinWrites.join(""))).toEqual({ format: "text", pattern: "callTool" });
+  });
+
+  it("rejects a too-old binary before spawning the tool", async () => {
+    const directory = await temporaryDirectory();
+    vi.stubEnv("CODEBASE_MEMORY_MCP_BIN", await fakeBinary(directory));
+    const versionCalls = stubVersionSpawn("codebase-memory-mcp 0.9.0");
+
+    await expect(new CbmClient().callTool("search_graph", { name_pattern: "x" })).rejects.toThrow(
+      /reinstall npm:pi-cbm@1\.2\.1/,
+    );
+
+    expect(versionCalls).toHaveLength(1);
+    expect(versionCalls[0].args).toEqual(["--version"]);
+    expect(spawnControl.spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a pre-aborted signal without spawning the tool", async () => {
+    const directory = await temporaryDirectory();
+    vi.stubEnv("CODEBASE_MEMORY_MCP_BIN", await fakeBinary(directory));
+    vi.stubEnv("PI_CBM_SKIP_VERSION_CHECK", "1");
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      new CbmClient().callTool("search_graph", { name_pattern: "x" }, { signal: controller.signal }),
+    ).rejects.toThrow(/cancelled/);
+    expect(spawnControl.spy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a 0.12 error envelope that exits non-zero", async () => {
+    const directory = await temporaryDirectory();
+    vi.stubEnv("CODEBASE_MEMORY_MCP_BIN", await fakeBinary(directory));
+    vi.stubEnv("PI_CBM_SKIP_VERSION_CHECK", "1");
+    const calls = stubSpawn('{"error":"symbol not found. Use search_graph(name_pattern=\\"x\\") first."}', {
+      code: 1,
+      isError: true,
+    });
+
+    await expect(new CbmClient().callTool("get_code_snippet", { qualified_name: "missing" })).rejects.toThrow(
+      /symbol not found/,
+    );
+    expect(calls[0].args).toEqual(["cli", "--json", "get_code_snippet"]);
   });
 });

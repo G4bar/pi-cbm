@@ -105,6 +105,26 @@ auto-sync. 0.12 also exposes `index_repository --status` and `--async`
   (`cannot read cache directory: <dir>` otherwise); 0.12 creates it.
 - 0.9.0 writes `level=info msg=mem.init ...` to stderr on every call; 0.12 does not.
 
+## Normalized shapes (phase 2 `normalizeCbmData`)
+
+`CbmClient.callTool` runs every parsed result through `normalizeCbmData`, so 0.12
+compact tables reach domain consumers as object arrays:
+
+- `search_graph`, grouped **and** flat `query:` tables: an object with the paging
+  meta preserved (`total`, `has_more`, `truncated`, `returned`, `next_offset`, ...)
+  and the expanded rows under `results`.
+- `search_code`: an object with its meta preserved (`total_results`, `has_more`,
+  ...) and the expanded rows under `results`.
+- `trace_path` `callers`/`callees`: bare arrays (no `results` wrapper).
+- `get_architecture` `node_labels`/`edge_types`/`languages`/`packages`/`entry_points`:
+  bare arrays; a `{cols, rows}` table with no sibling keys always collapses to an array.
+- `query_graph` `{columns, rows}`: untouched (still consumed by `coerceQueryGraphMetrics`).
+- Expanded rows get aliases: `qn`->`qualified_name`, `file`->`file_path` (both kept),
+  `lines` "a-b" -> numeric `start_line`/`end_line`, `in`/`out` -> `in_degree`/`out_degree`,
+  `matches` -> `match_lines`. `null` source cells are not aliased.
+
+Phase 4/5 consumers should read `data.results` for `search_graph` and `search_code`.
+
 ## Reproducing / refreshing
 
 ```sh
