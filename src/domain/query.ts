@@ -3,7 +3,7 @@ import type { CbmData } from "../cbm/normalize.js";
 import { queryTimeoutMs } from "../cbm/timeouts.js";
 import { isRecord, removeUndefined } from "../shared/object.js";
 import { OutputService, stripOutputControls } from "./output.js";
-import { ProjectService, type ToolExecutionContext } from "./project.js";
+import { ProjectService, type IndexFreshness, type ToolExecutionContext } from "./project.js";
 import { TraceService } from "./trace.js";
 
 const NUMERIC_QUERY_COLUMNS = new Set([
@@ -42,6 +42,17 @@ function coerceQueryGraphMetrics(data: CbmData): CbmData {
   return { ...data, rows };
 }
 
+function freshnessLine(freshness: IndexFreshness): string {
+  return freshness.refreshed
+    ? `index refreshed ${Math.round(freshness.age_ms / 1000)} s ago`
+    : `graph may be stale: ${freshness.reason}`;
+}
+
+function withIndexFreshness(data: CbmData, freshness: IndexFreshness): CbmData {
+  if (!isRecord(data)) return data;
+  return { ...data, index_freshness: freshnessLine(freshness) };
+}
+
 export class QueryService {
   constructor(
     private readonly cbm: CbmClient,
@@ -60,6 +71,8 @@ export class QueryService {
     const upstreamParams = stripOutputControls(params);
     const args = needsProject ? await this.withProject(upstreamParams, ctx) : removeUndefined(upstreamParams);
     const project = typeof args.project === "string" ? args.project : "";
+    // CLI-mode cbm indexes are not watched; re-index before impact analysis so an edit made moments ago is visible.
+    const freshness = toolName === "detect_changes" && project ? await this.projects.ensureFreshIndex(project, ctx) : undefined;
     const result = await this.projects.withProjectError(project, ctx, () =>
       this.cbm.callTool(toolName, args, { signal: ctx.signal, timeoutMs: queryTimeoutMs(params.timeout_ms) }),
     );
@@ -68,7 +81,8 @@ export class QueryService {
       : project && isRecord(result.data)
         ? await this.projects.relativizePaths(result.data, project, ctx.signal)
         : result.data;
-    return this.output.buildCompactableToolResult(title, data, params, { tool: toolName, args, stderr: result.stderr });
+    const outputData = freshness ? withIndexFreshness(data as CbmData, freshness) : data;
+    return this.output.buildCompactableToolResult(title, outputData, params, { tool: toolName, args, stderr: result.stderr });
   }
 
   async queryGraph(params: Record<string, unknown>, ctx: ToolExecutionContext) {

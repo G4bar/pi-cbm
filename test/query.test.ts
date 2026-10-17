@@ -44,3 +44,20 @@ describe("QueryService project errors", () => {
     );
   });
 });
+
+describe("query_graph 0.12 shapes", () => {
+  it("coerces numeric metrics and keeps the paging meta", async () => {
+    const service = queryServiceWith(async () => ({
+      ok: true,
+      data: { columns: ["name", "complexity"], rows: [["a", "5"]], returned: 1, total: 1, has_more: false },
+      rawText: "",
+      stderr: "",
+    }));
+
+    const result = await service.queryGraph({ query: "MATCH (n) RETURN n.name, n.complexity" }, CTX);
+    const data = result.details.data as Record<string, unknown>;
+    expect(data.rows).toEqual([["a", 5]]);
+    expect(data.returned).toBe(1);
+    expect(data.has_more).toBe(false);
+  });
+});

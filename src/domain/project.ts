@@ -1,12 +1,16 @@
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { CbmClient } from "../cbm/client.js";
 import { indexTimeoutMs } from "../cbm/timeouts.js";
 import { errorText, errorTextWithDetails } from "../shared/strings.js";
 import { validateAutoIndexPath } from "./auto-index-paths.js";
-import type { IndexCoordinator } from "./index-coordinator.js";
+import { INDEX_LEASE_HELD_REASON, type IndexCoordinator, type IndexLeaseResult } from "./index-coordinator.js";
 
 const AUTO_INDEX_MODE = "full";
+
+/** `detect_changes` re-indexes at most once per window; a graph this fresh is current enough. */
+const INDEX_FRESH_WINDOW_MS = 5_000;
+const LEASE_WAIT_RETRY_MS = 500;
 
 /** Keep a missing `root_path` cached briefly so one failed lookup doesn't re-run per node in a batch. */
 const ROOT_PATH_MISS_TTL_MS = 30_000;
@@ -61,6 +65,10 @@ export type IndexResult =
       reason: string;
     };
 
+export type IndexFreshness =
+  | { refreshed: true; age_ms: number }
+  | { refreshed: false; reason: string };
+
 export type AutoIndexSettings = {
   readonly autoIndexNonGitDirectories: boolean;
 };
@@ -74,9 +82,25 @@ function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || /^[a-z]:[\\/]/i.test(value);
 }
 
+function waitForLease(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolvePromise) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolvePromise(false);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolvePromise(true);
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export class ProjectService {
   private readonly rootPaths = new Map<string, Promise<string | undefined>>();
   private readonly rootPathMisses = new Map<string, number>();
+  private readonly lastIndexFinishedAt = new Map<string, number>();
   private projectsCache?: { at: number; value: CbmProject[] };
   private projectsInFlight?: Promise<CbmProject[]>;
   private projectsGeneration = 0;
@@ -330,13 +354,13 @@ export class ProjectService {
     return { ok: true, path: validation.path, source: "cwd" };
   }
 
-  async indexCurrentRepo(cwd: string, signal?: AbortSignal): Promise<IndexResult> {
+  async indexCurrentRepo(cwd: string, signal?: AbortSignal, options: { waitForLeaseMs?: number } = {}): Promise<IndexResult> {
     const target = await this.autoIndexTarget(cwd, signal);
     if (!target.ok) {
       return { status: "skipped", reason: target.reason };
     }
 
-    const coordination = await this.indexCoordinator.acquire(target.path, signal);
+    const coordination = await this.acquireIndexLease(target.path, signal, options.waitForLeaseMs);
     if (!coordination.ok) {
       return { status: "skipped", reason: coordination.reason };
     }
@@ -348,6 +372,7 @@ export class ProjectService {
         { signal: coordination.lease.signal, timeoutMs: indexTimeoutMs(undefined) },
       );
       const data = result.data && typeof result.data === "object" ? (result.data as Record<string, unknown>) : {};
+      this.lastIndexFinishedAt.set(this.indexKey(target.path), Date.now());
       this.invalidateProjectCaches();
       return {
         status: "indexed",
@@ -359,5 +384,66 @@ export class ProjectService {
     } finally {
       await coordination.lease.release();
     }
+  }
+
+  /** A held repo lease means another session is already indexing; wait for it instead of skipping. */
+  private async acquireIndexLease(repoPath: string, signal: AbortSignal | undefined, waitForLeaseMs: number | undefined): Promise<IndexLeaseResult> {
+    const deadline = waitForLeaseMs === undefined ? undefined : Date.now() + waitForLeaseMs;
+    let coordination = await this.indexCoordinator.acquire(repoPath, signal);
+    while (
+      !coordination.ok &&
+      coordination.reason === INDEX_LEASE_HELD_REASON &&
+      deadline !== undefined &&
+      Date.now() < deadline &&
+      !signal?.aborted
+    ) {
+      if (!(await waitForLease(Math.min(LEASE_WAIT_RETRY_MS, deadline - Date.now()), signal))) break;
+      coordination = await this.indexCoordinator.acquire(repoPath, signal);
+    }
+    return coordination;
+  }
+
+  /**
+   * Force a re-index before `detect_changes` unless this project's root was
+   * indexed within the freshness window. CLI-mode cbm indexes are not watched,
+   * so a stale graph silently omits impacted symbols after an edit.
+   */
+  async ensureFreshIndex(project: string, ctx: ToolExecutionContext): Promise<IndexFreshness | undefined> {
+    const root = await this.indexableProjectRoot(project, ctx.signal);
+    if (!root) return undefined;
+    const age = this.indexAgeMs(root);
+    if (age !== undefined && age < INDEX_FRESH_WINDOW_MS) return { refreshed: true, age_ms: age };
+
+    let result: IndexResult;
+    try {
+      result = await this.indexCurrentRepo(root, ctx.signal, { waitForLeaseMs: indexTimeoutMs(undefined) });
+    } catch (error) {
+      return { refreshed: false, reason: error instanceof Error && error.message ? error.message : "index failed" };
+    }
+    if (result.status !== "indexed") return { refreshed: false, reason: result.reason };
+    return { refreshed: true, age_ms: this.indexAgeMs(root) ?? 0 };
+  }
+
+  /** Only index a project root that exists on disk; never guess an explicit project's path. */
+  private async indexableProjectRoot(project: string, signal?: AbortSignal): Promise<string | undefined> {
+    const root = await this.projectRootPath(project, signal);
+    if (!root) return undefined;
+    try {
+      const stats = await stat(root);
+      return stats.isDirectory() ? root : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private indexAgeMs(root: string): number | undefined {
+    const finishedAt = this.lastIndexFinishedAt.get(this.indexKey(root));
+    return finishedAt === undefined ? undefined : Date.now() - finishedAt;
+  }
+
+  private indexKey(path: string): string {
+    const normalized = resolve(path).replaceAll("\\", "/");
+    const trimmed = normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
+    return CASE_INSENSITIVE_MATCH ? trimmed.toLowerCase() : trimmed;
   }
 }

@@ -301,12 +301,14 @@ function compactSearchGraphData(data: unknown): MetadataProjection {
   return { data: appendMetadataHint(compact), pruned: true };
 }
 
-/** 0.12 pages `search_graph` silently; tell the model how to continue. */
+/** 0.12 pages `search_graph`/`search_code` silently; tell the model how to continue. */
 function paginationHint(data: Record<string, unknown>): string | undefined {
   if (data.has_more !== true && data.truncated !== true) return undefined;
-  const returned = numberProp(data, "returned") ?? numberProp(data, "count");
+  const returned = numberProp(data, "returned") ?? numberProp(data, "count") ?? numberProp(data, "results_returned");
   const total = numberProp(data, "total");
-  const nextOffset = numberProp(data, "next_offset") ?? (returned !== undefined ? (numberProp(data, "offset") ?? 0) + returned : undefined);
+  const nextOffset =
+    numberProp(data, "next_offset") ??
+    (returned !== undefined ? (numberProp(data, "offset") ?? numberProp(data, "result_offset") ?? 0) + returned : undefined);
   const shown = returned !== undefined && total !== undefined ? `showing ${returned} of ${total}` : "more results available";
   const reason = typeof data.truncation_reason === "string" && data.truncation_reason ? ` (${data.truncation_reason})` : "";
   return nextOffset !== undefined
@@ -418,10 +420,16 @@ function compactSearchCodeData(data: unknown): MetadataProjection {
     "raw_match_count",
     "dedup_ratio",
     "has_more",
+    "truncated",
+    "next_offset",
     "limit",
     "offset",
+    "returned",
+    "results_returned",
   ]);
   if (Array.isArray(data.results)) compact.results = compactSymbolArray(data.results, { includeSource: true, includeMatches: true });
+  const pagination = paginationHint(data);
+  if (pagination) compact.pagination_hint = pagination;
   return { data: appendMetadataHint(compact), pruned: true };
 }
 
@@ -447,7 +455,12 @@ function compactArchitectureEntry(value: CbmData): CbmData {
     "layer",
     "reason",
     "language",
+    "type",
     "count",
+    "files",
+    "nodes",
+    "node_count",
+    "file_count",
   ]);
 }
 
@@ -455,8 +468,11 @@ function compactArchitectureData(data: unknown): MetadataProjection {
   if (!isRecord(data)) return { data, pruned: false };
   const compact = pickDefined(data, [
     "project",
+    "aspects_hint",
     "total_nodes",
     "total_edges",
+    "node_labels",
+    "edge_types",
     "languages",
     "packages",
     "modules",
@@ -475,9 +491,35 @@ function compactArchitectureData(data: unknown): MetadataProjection {
   return { data: appendMetadataHint(compact), pruned: true };
 }
 
+/** 0.12 `detect_changes.impacted` rows carry `qn`, unlike normalized table rows. */
+function aliasImpactedRow(item: CbmData): CbmData {
+  if (!isRecord(item) || item.qualified_name !== undefined || typeof item.qn !== "string") return item;
+  return { ...item, qualified_name: item.qn };
+}
+
 function compactDetectChangesData(data: unknown): MetadataProjection {
   if (!isRecord(data)) return { data, pruned: false };
-  const compact = pickDefined(data, ["changed_files", "changed_count", "depth", "risk", "summary"]);
+  const compact = pickDefined(data, [
+    "base",
+    "merge_base",
+    "direction",
+    "changed_files",
+    "changed_count",
+    "changed_total",
+    "changed_returned",
+    "changed_has_more",
+    "seed_symbols",
+    "impacted_total",
+    "impacted_shown",
+    "impacted_has_more",
+    "impacted_modules",
+    "depth",
+    "risk",
+    "summary",
+    "truncated",
+    "index_freshness",
+  ]);
+  if (Array.isArray(data.impacted)) compact.impacted = compactSymbolArray(data.impacted.map(aliasImpactedRow));
   if (Array.isArray(data.impacted_symbols)) compact.impacted_symbols = compactSymbolArray(data.impacted_symbols);
   if (Array.isArray(data.impacts)) compact.impacts = compactSymbolArray(data.impacts);
   return { data: appendMetadataHint(compact), pruned: true };
