@@ -1,20 +1,88 @@
+import { EventEmitter } from "node:events";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const spawnControl = vi.hoisted(() => ({
+  spy: vi.fn(),
+  real: undefined as typeof import("node:child_process").spawn | undefined,
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  spawnControl.real = actual.spawn;
+  spawnControl.spy.mockImplementation((...args: Parameters<typeof actual.spawn>) => actual.spawn(...args));
+  return { ...actual, spawn: spawnControl.spy };
+});
+
 import { CbmClient } from "../src/cbm/client.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  spawnControl.spy.mockReset();
+  const real = spawnControl.real;
+  if (real) spawnControl.spy.mockImplementation((...args: Parameters<typeof real>) => real(...args));
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
+class FakeChildProcess extends EventEmitter {
+  readonly stdout = new EventEmitter();
+  readonly stderr = new EventEmitter();
+  readonly stdinWrites: string[] = [];
+  readonly stdin: { on: () => void; end: (chunk: string) => void } | null;
+  killed = false;
+  readonly kill = vi.fn();
+
+  constructor(withStdin: boolean) {
+    super();
+    this.stdin = withStdin
+      ? {
+          on: () => {},
+          end: (chunk) => {
+            this.stdinWrites.push(chunk);
+          },
+        }
+      : null;
+  }
+}
+
+type SpawnCall = { args: string[]; child: FakeChildProcess };
+
+function stubSpawn(text: string): SpawnCall[] {
+  const calls: SpawnCall[] = [];
+  spawnControl.spy.mockImplementationOnce((_command: string, args: string[], options: { stdio?: unknown }) => {
+    const stdio = options?.stdio;
+    const child = new FakeChildProcess(Array.isArray(stdio) && stdio[0] === "pipe");
+    calls.push({ args, child });
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from(JSON.stringify({ content: [{ type: "text", text }] })));
+      child.emit("close", 0, null);
+    });
+    return child as unknown as ChildProcess;
+  });
+  return calls;
+}
+
+async function fakeBinary(directory: string): Promise<string> {
+  const binaryPath = join(directory, "fake-codebase-memory.mjs");
+  await writeFile(binaryPath, "#!/usr/bin/env node\nprocess.stdout.write('{}');\n");
+  await chmod(binaryPath, 0o755);
+  return binaryPath;
+}
+
+async function temporaryDirectory(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "pi-cbm-client-test-"));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
 describe("CbmClient environment", () => {
   it("forwards the PI cache directory to the upstream CLI", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "pi-cbm-client-test-"));
-    temporaryDirectories.push(directory);
+    const directory = await temporaryDirectory();
     const observedPath = join(directory, "observed-cache-dir");
     const binaryPath = join(directory, "fake-codebase-memory.mjs");
     await writeFile(
@@ -35,5 +103,45 @@ describe("CbmClient environment", () => {
     vi.stubEnv("PI_CBM_CACHE_DIR", "");
     await client.callTool("list_projects", {});
     await expect(readFile(observedPath, "utf8")).resolves.toBe(legacyCache);
+  });
+});
+
+describe("CbmClient CLI transport", () => {
+  it("sends tool args on stdin and keeps JSON off argv", async () => {
+    const directory = await temporaryDirectory();
+    vi.stubEnv("CODEBASE_MEMORY_MCP_BIN", await fakeBinary(directory));
+    vi.stubEnv("PI_CBM_SKIP_VERSION_CHECK", "1");
+    const calls = stubSpawn("{}");
+
+    await new CbmClient().callTool("search_graph", { name_pattern: "callTool" });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual(["cli", "--json", "search_graph"]);
+    expect(calls[0].args.every((arg) => !arg.startsWith("{"))).toBe(true);
+    expect(JSON.parse(calls[0].child.stdinWrites.join(""))).toEqual({ format: "json", name_pattern: "callTool" });
+  });
+
+  it("lists projects with the --format flag and no stdin", async () => {
+    const directory = await temporaryDirectory();
+    vi.stubEnv("CODEBASE_MEMORY_MCP_BIN", await fakeBinary(directory));
+    vi.stubEnv("PI_CBM_SKIP_VERSION_CHECK", "1");
+    const calls = stubSpawn("{}");
+
+    await new CbmClient().callTool("list_projects", {});
+
+    expect(calls[0].args).toEqual(["cli", "--json", "list_projects", "--format", "json"]);
+    expect(calls[0].child.stdin).toBeNull();
+    expect(calls[0].child.stdinWrites).toEqual([]);
+  });
+
+  it("keeps a caller-supplied format instead of injecting json", async () => {
+    const directory = await temporaryDirectory();
+    vi.stubEnv("CODEBASE_MEMORY_MCP_BIN", await fakeBinary(directory));
+    vi.stubEnv("PI_CBM_SKIP_VERSION_CHECK", "1");
+    const calls = stubSpawn("{}");
+
+    await new CbmClient().callTool("search_code", { format: "text", pattern: "callTool" });
+
+    expect(JSON.parse(calls[0].child.stdinWrites.join(""))).toEqual({ format: "text", pattern: "callTool" });
   });
 });
