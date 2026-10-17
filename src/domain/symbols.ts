@@ -4,7 +4,7 @@ import { detectedCbmVersion } from "../cbm/version.js";
 import { mapLimit } from "../shared/concurrency.js";
 import { clampInt } from "../shared/numbers.js";
 import { isRecord, numberProp, removeUndefined, stringProp } from "../shared/object.js";
-import { errorText, errorTextWithDetails, escapeRegExp, normalizeForMatch } from "../shared/strings.js";
+import { errorText, escapeRegExp, normalizeForMatch } from "../shared/strings.js";
 import { OutputService, stripOutputControls } from "./output.js";
 import { ProjectService, type ToolExecutionContext } from "./project.js";
 
@@ -351,7 +351,7 @@ export class SymbolService {
 
     // Every lookup failing is a cbm/contract error (bad project, bad regex, ...),
     // not an empty result set. Partial failures are tolerated.
-    if (results.every((result) => !result.ok)) throw new Error(errorTextWithDetails(results[0]!.data));
+    if (results.every((result) => !result.ok)) throw await this.projects.projectLookupError(results[0]!.data, project, ctx.cwd, ctx.signal);
 
     const deduped = dedupeCandidates(candidates);
     const filtered = filterCandidates(deduped, args).slice(0, limit);
@@ -544,8 +544,7 @@ export class SymbolService {
   }
 
   private async withProject<T extends Record<string, unknown>>(params: T, ctx: ToolExecutionContext): Promise<Record<string, unknown>> {
-    if (typeof params.project === "string" && params.project.trim()) return removeUndefined(params);
-    return removeUndefined({ ...params, project: await this.projects.inferProject(ctx.cwd, ctx.signal) });
+    return removeUndefined({ ...params, project: await this.projects.resolveProject(params.project, ctx.cwd, ctx.signal) });
   }
 
   private async readQualifiedName(

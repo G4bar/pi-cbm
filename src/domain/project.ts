@@ -1,7 +1,8 @@
+import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { CbmClient } from "../cbm/client.js";
 import { indexTimeoutMs } from "../cbm/timeouts.js";
-import { errorText } from "../shared/strings.js";
+import { errorText, errorTextWithDetails } from "../shared/strings.js";
 import { validateAutoIndexPath } from "./auto-index-paths.js";
 import type { IndexCoordinator } from "./index-coordinator.js";
 
@@ -9,6 +10,14 @@ const AUTO_INDEX_MODE = "full";
 
 /** Keep a missing `root_path` cached briefly so one failed lookup doesn't re-run per node in a batch. */
 const ROOT_PATH_MISS_TTL_MS = 30_000;
+
+/** Shared by validation and path rewriting so a burst of tool calls spawns `list_projects` once. */
+const PROJECTS_CACHE_TTL_MS = 10_000;
+
+const MAX_LISTED_PROJECTS = 10;
+
+/** cbm rejects projects by index, not by name/path spelling. */
+const PROJECT_ERROR_PATTERN = /project not found|not indexed/i;
 
 export type CbmProject = {
   name: string;
@@ -58,6 +67,8 @@ function isAbsolutePath(value: string): boolean {
 export class ProjectService {
   private readonly rootPaths = new Map<string, Promise<string | undefined>>();
   private readonly rootPathMisses = new Map<string, number>();
+  private projectsCache?: { at: number; value: CbmProject[] };
+  private projectsInFlight?: Promise<CbmProject[]>;
 
   constructor(
     private readonly cbm: CbmClient,
@@ -81,6 +92,20 @@ export class ProjectService {
   }
 
   async listProjects(signal?: AbortSignal): Promise<CbmProject[]> {
+    const cached = this.projectsCache;
+    if (cached && Date.now() - cached.at < PROJECTS_CACHE_TTL_MS) return cached.value;
+    this.projectsInFlight ??= this.fetchProjects(signal)
+      .then((projects) => {
+        this.projectsCache = { at: Date.now(), value: projects };
+        return projects;
+      })
+      .finally(() => {
+        this.projectsInFlight = undefined;
+      });
+    return this.projectsInFlight;
+  }
+
+  private async fetchProjects(signal?: AbortSignal): Promise<CbmProject[]> {
     const result = await this.cbm.callTool("list_projects", {}, { signal, allowError: true });
     const data = result.data as ListProjectsData;
     if (!result.ok && data?.error?.includes("cannot read cache directory")) return [];
@@ -133,19 +158,95 @@ export class ProjectService {
     return request;
   }
 
-  async inferProject(cwd: string, signal?: AbortSignal): Promise<string> {
-    const root = await this.gitRoot(cwd, signal);
+  /**
+   * Resolve the `project` a tool should use. Explicit names and absolute paths
+   * are validated against the indexed projects; an unmatched value throws with
+   * the indexed list instead of letting cbm answer "symbol not found".
+   */
+  async resolveProject(explicit: unknown, cwd: string, signal?: AbortSignal): Promise<string> {
+    const given = typeof explicit === "string" ? explicit.trim() : "";
     const projects = await this.listProjects(signal);
-    const cwdResolved = resolve(cwd);
-    const rootResolved = resolve(root);
 
-    const matching = projects
-      .filter((project) => project.root_path)
-      .map((project) => ({ project, rootPath: resolve(project.root_path!) }))
-      .filter(({ rootPath }) => cwdResolved === rootPath || cwdResolved.startsWith(`${rootPath}/`) || rootResolved === rootPath)
-      .sort((a, b) => b.rootPath.length - a.rootPath.length);
+    if (given) {
+      if (projects.some((project) => project.name === given)) return given;
+      if (isAbsolutePath(given)) {
+        const match = await this.matchProject(projects, [given]);
+        if (match) return match.name;
+      }
+      throw new Error(this.projectResolutionMessage(given, cwd, await this.gitRootOrUndefined(cwd, signal), projects));
+    }
 
-    return matching[0]?.project.name ?? this.projectNameFromPath(root);
+    const gitRoot = await this.gitRootOrUndefined(cwd, signal);
+    const match = await this.matchProject(projects, gitRoot ? [cwd, gitRoot] : [cwd]);
+    if (match) return match.name;
+    throw new Error(this.projectResolutionMessage(undefined, cwd, gitRoot, projects));
+  }
+
+  /**
+   * cbm can still reject a project `resolveProject` accepted (e.g. its index was
+   * dropped). Keep cbm's detail but append the same actionable project list.
+   */
+  async projectLookupError(value: unknown, project: string, cwd: string, signal?: AbortSignal): Promise<Error> {
+    const text = errorTextWithDetails(value);
+    if (!PROJECT_ERROR_PATTERN.test(text)) return new Error(text);
+    const projects = await this.listProjects(signal).catch(() => []);
+    const gitRoot = await this.gitRootOrUndefined(cwd, signal);
+    return new Error(`${text} ${this.projectResolutionMessage(project || undefined, cwd, gitRoot, projects)}`);
+  }
+
+  private async gitRootOrUndefined(cwd: string, signal?: AbortSignal): Promise<string | undefined> {
+    try {
+      return await this.cbm.findGitRoot(cwd, signal);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async matchProject(projects: CbmProject[], paths: string[]): Promise<CbmProject | undefined> {
+    const plain = this.longestPrefix(await this.projectRoots(projects, false), paths.map((path) => resolve(path)));
+    if (plain) return plain;
+    // Symlinked cwd/root: retry with both sides canonicalized.
+    const canonicalPaths = await Promise.all(paths.map((path) => realpath(path).catch(() => resolve(path))));
+    return this.longestPrefix(await this.projectRoots(projects, true), canonicalPaths);
+  }
+
+  private async projectRoots(projects: CbmProject[], canonicalize: boolean): Promise<Array<{ project: CbmProject; root: string }>> {
+    const roots: Array<{ project: CbmProject; root: string }> = [];
+    for (const project of projects) {
+      if (!project.root_path) continue;
+      const resolvedPath = resolve(project.root_path);
+      const root = canonicalize ? await realpath(project.root_path).catch(() => resolvedPath) : resolvedPath;
+      roots.push({ project, root: root.replaceAll("\\", "/") });
+    }
+    return roots;
+  }
+
+  private longestPrefix(roots: Array<{ project: CbmProject; root: string }>, paths: string[]): CbmProject | undefined {
+    const normalized = paths.map((path) => path.replaceAll("\\", "/"));
+    return roots
+      .filter(({ root }) => normalized.some((path) => path === root || path.startsWith(`${root}/`)))
+      .sort((a, b) => b.root.length - a.root.length)[0]?.project;
+  }
+
+  private projectResolutionMessage(given: string | undefined, cwd: string, gitRoot: string | undefined, projects: CbmProject[]): string {
+    const listed = projects.slice(0, MAX_LISTED_PROJECTS).map((project) => `${project.name} -> ${project.root_path ?? "(unknown root)"}`);
+    const more = projects.length > listed.length ? ` (+${projects.length - listed.length} more)` : "";
+    const available = listed.length > 0 ? `indexed projects: ${listed.join(", ")}${more}` : "no projects are indexed yet";
+    let tried = `cwd "${cwd}", which has no git root`;
+    if (given) tried = `the given value "${given}" (as a project name and as an absolute path)`;
+    else if (gitRoot) tried = `cwd "${cwd}" and its git root "${gitRoot}"`;
+    return [
+      `No indexed project matches ${tried}.`,
+      available,
+      "pass `project` as one of these names or as the repo's absolute path (required when the cwd is outside the repo)",
+      "if the repository was just indexed, indexing may still be running",
+    ].join("; ");
+  }
+
+  private invalidateProjectCaches(): void {
+    this.projectsCache = undefined;
+    this.rootPaths.clear();
+    this.rootPathMisses.clear();
   }
 
   async defaultRepoPath(cwd: string, signal?: AbortSignal): Promise<string> {
@@ -187,6 +288,7 @@ export class ProjectService {
         { signal: coordination.lease.signal, timeoutMs: indexTimeoutMs(undefined) },
       );
       const data = result.data && typeof result.data === "object" ? (result.data as Record<string, unknown>) : {};
+      this.invalidateProjectCaches();
       return {
         status: "indexed",
         project: typeof data.project === "string" ? data.project : "ready",

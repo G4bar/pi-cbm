@@ -113,10 +113,10 @@ describe("SymbolService on cbm 0.12 shapes", () => {
   });
 
   it("surfaces a failed search_graph lookup instead of reporting symbol-not-found", async () => {
-    const service = serviceWith(() => fixture("search_graph.unknown-project"));
+    const service = serviceWith(() => fixture("search_graph.unknown-project"), projectsResult("no-such-project"));
 
     await expect(service.resolveCandidates({ name: "callTool", project: "no-such-project" }, CTX)).rejects.toThrow(
-      /project not found or not indexed.*available_projects: tmp-cbm-fixture-repo/,
+      /project not found or not indexed.*available_projects: tmp-cbm-fixture-repo.*absolute path/,
     );
   });
 

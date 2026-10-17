@@ -4,7 +4,7 @@ import { buildToolTextResult } from "../cbm/result.js";
 import { queryTimeoutMs } from "../cbm/timeouts.js";
 import { mapLimit } from "../shared/concurrency.js";
 import { isRecord, removeUndefined, stringProp } from "../shared/object.js";
-import { errorText, errorTextWithDetails, escapeRegExp } from "../shared/strings.js";
+import { errorText, escapeRegExp } from "../shared/strings.js";
 import { OutputService, stripOutputControls } from "./output.js";
 import { ProjectService, type ToolExecutionContext } from "./project.js";
 import { dedupeCandidates, hasLocation, searchCandidates, type SearchCandidate, SymbolService } from "./symbols.js";
@@ -154,8 +154,7 @@ export class TraceService {
   }
 
   private async withProject<T extends Record<string, unknown>>(params: T, ctx: ToolExecutionContext): Promise<Record<string, unknown>> {
-    if (typeof params.project === "string" && params.project.trim()) return removeUndefined(params);
-    return removeUndefined({ ...params, project: await this.projects.inferProject(ctx.cwd, ctx.signal) });
+    return removeUndefined({ ...params, project: await this.projects.resolveProject(params.project, ctx.cwd, ctx.signal) });
   }
 
   private async findTraceCandidates(functionName: string, project: string, ctx: ToolExecutionContext): Promise<SearchCandidate[]> {
@@ -185,7 +184,7 @@ export class TraceService {
       candidates.push(...batch);
     }
 
-    if (candidates.length === 0 && failures.length === searches.length) throw new Error(errorTextWithDetails(failures[0]));
+    if (candidates.length === 0 && failures.length === searches.length) throw await this.projects.projectLookupError(failures[0], project, ctx.cwd, ctx.signal);
     return dedupeCandidates(candidates).slice(0, 10);
   }
 }

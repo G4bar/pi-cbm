@@ -81,7 +81,6 @@ export class QueryService {
   }
 
   private async withProject<T extends Record<string, unknown>>(params: T, ctx: ToolExecutionContext): Promise<Record<string, unknown>> {
-    if (typeof params.project === "string" && params.project.trim()) return removeUndefined(params);
-    return removeUndefined({ ...params, project: await this.projects.inferProject(ctx.cwd, ctx.signal) });
+    return removeUndefined({ ...params, project: await this.projects.resolveProject(params.project, ctx.cwd, ctx.signal) });
   }
 }
