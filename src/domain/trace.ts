@@ -70,7 +70,7 @@ export class TraceService {
       const enriched = filterTraceData(await this.enrichTraceLocations(result.data, project, params, ctx), params);
       return this.output.buildCompactableToolResult("Trace path results", enriched, params, { tool: "trace_path", args, stderr: result.stderr });
     }
-    if (!isFunctionNotFound(result.data) || !functionName || !project) throw new Error(errorText(result.data));
+    if (!isFunctionNotFound(result.data) || !functionName || !project) throw await this.projects.projectLookupError(result.data, project, ctx.cwd, ctx.signal);
 
     const candidates = await this.findTraceCandidates(functionName, project, ctx);
     if (candidates.length === 1 && candidates[0]?.qualified_name) {

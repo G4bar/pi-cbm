@@ -17,6 +17,7 @@ export function normalizeForMatch(value: string): string {
 }
 
 export function errorText(value: unknown): string {
+  if (value instanceof Error) return value.message;
   if (typeof value === "string") return value;
   if (isRecord(value) && typeof value.error === "string") return value.error;
   return JSON.stringify(value);

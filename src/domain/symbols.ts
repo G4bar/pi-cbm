@@ -561,7 +561,7 @@ export class SymbolService {
       allowError: true,
     });
 
-    if (!snippet.ok) throw new Error(errorText(snippet.data));
+    if (!snippet.ok) throw await this.projects.projectLookupError(snippet.data, project, ctx.cwd, ctx.signal);
     const data = isRecord(snippet.data) ? ((await this.projects.relativizePaths(snippet.data, project, ctx.signal)) as Record<string, unknown>) : { snippet: snippet.data };
     return { data, stderr: snippet.stderr };
   }

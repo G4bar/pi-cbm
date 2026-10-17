@@ -59,8 +59,10 @@ export class QueryService {
   ) {
     const upstreamParams = stripOutputControls(params);
     const args = needsProject ? await this.withProject(upstreamParams, ctx) : removeUndefined(upstreamParams);
-    const result = await this.cbm.callTool(toolName, args, { signal: ctx.signal, timeoutMs: queryTimeoutMs(params.timeout_ms) });
     const project = typeof args.project === "string" ? args.project : "";
+    const result = await this.projects.withProjectError(project, ctx, () =>
+      this.cbm.callTool(toolName, args, { signal: ctx.signal, timeoutMs: queryTimeoutMs(params.timeout_ms) }),
+    );
     const data = project && (toolName === "search_graph" || toolName === "get_architecture" || toolName === "detect_changes")
       ? await this.trace.enrichTraceLocations(result.data, project, params, ctx)
       : project && isRecord(result.data)
@@ -71,7 +73,9 @@ export class QueryService {
 
   async queryGraph(params: Record<string, unknown>, ctx: ToolExecutionContext) {
     const args = await this.withProject(stripOutputControls({ max_rows: 200, ...params }), ctx);
-    const result = await this.cbm.callTool("query_graph", args, { signal: ctx.signal, timeoutMs: queryTimeoutMs(params.timeout_ms) });
+    const result = await this.projects.withProjectError(String(args.project ?? ""), ctx, () =>
+      this.cbm.callTool("query_graph", args, { signal: ctx.signal, timeoutMs: queryTimeoutMs(params.timeout_ms) }),
+    );
     return this.output.buildCompactableToolResult("Cypher query results", coerceQueryGraphMetrics(result.data as CbmData), params, {
       tool: "query_graph",
       args,

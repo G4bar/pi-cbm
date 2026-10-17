@@ -120,6 +120,21 @@ describe("SymbolService on cbm 0.12 shapes", () => {
     );
   });
 
+  it("enriches a get_code_snippet project error with the indexed project list", async () => {
+    const service = serviceWith(() => ({
+      ok: false,
+      data: { error: "project not found or not indexed", hint: "Use list_projects.", available_projects: ["tmp-cbm-fixture-repo"] },
+      rawText: "",
+      stderr: "",
+    }));
+
+    const result = await service.getSnippets({ qualified_names: ["missing"], project: PROJECT }, CTX);
+    const results = (result.details.data as { results: Array<{ error?: string }> }).results;
+
+    expect(results[0]?.error).toMatch(/project not found or not indexed/);
+    expect(results[0]?.error).toMatch(/absolute path/);
+  });
+
   it("tolerates a partial search_graph failure", async () => {
     const service = serviceWith((tool, args) => (args.query ? fixture("search_graph.unknown-project") : searchByName()));
     const resolution = await service.resolveCandidates({ name: "callTool", project: PROJECT }, CTX);

@@ -50,11 +50,15 @@ export class CbmClient {
     }
 
     // 0.12 ignores `format` on stdin for list_projects, so that one uses the flag and no stdin.
-    // list_projects currently takes no args, so any caller args are dropped on this path.
+    // limit/offset are forwarded as flags so callers can page past cbm's default 50; other args stay dropped.
     const argv = ["cli", "--json", toolName];
     let stdin: string | undefined;
     if (toolName === "list_projects") {
       argv.push("--format", "json");
+      for (const flag of ["limit", "offset"] as const) {
+        const value = args[flag];
+        if (typeof value === "number" && Number.isInteger(value)) argv.push(`--${flag}`, String(value));
+      }
     } else {
       stdin = JSON.stringify({ format: "json", ...args });
     }

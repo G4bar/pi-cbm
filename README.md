@@ -124,7 +124,9 @@ Registers:
 - `query_graph`
 - `detect_changes`
 
-Most tools accept optional `project`. When omitted, the extension infers it from indexed project roots matching Pi's current working directory. Agents should omit `project` for cwd/current-project work and provide it only when intentionally querying an external indexed project.
+Most tools accept optional `project`. When omitted, the extension infers it from indexed project roots matching Pi's current working directory. Agents should omit `project` for cwd/current-project work and provide it only when intentionally querying an external indexed project. A `project` value must be an indexed project name or a path (absolute, or relative to the current working directory); an unknown value fails with the indexed project list instead of falling back to a guessed name.
+
+Matching uses the longest indexed root that contains the working directory, so a git worktree or nested checkout that is not indexed itself resolves to the containing repo's graph. Index the worktree separately to query its own graph.
 
 ## Commands
 

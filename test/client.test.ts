@@ -150,6 +150,17 @@ describe("CbmClient CLI transport", () => {
     expect(calls[0].child.stdinWrites).toEqual([]);
   });
 
+  it("forwards list_projects limit and offset as flags", async () => {
+    const directory = await temporaryDirectory();
+    vi.stubEnv("CODEBASE_MEMORY_MCP_BIN", await fakeBinary(directory));
+    vi.stubEnv("PI_CBM_SKIP_VERSION_CHECK", "1");
+    const calls = stubSpawn("{}");
+
+    await new CbmClient().callTool("list_projects", { limit: 50, offset: 100 });
+
+    expect(calls[0].args).toEqual(["cli", "--json", "list_projects", "--format", "json", "--limit", "50", "--offset", "100"]);
+  });
+
   it("keeps a caller-supplied format instead of injecting json", async () => {
     const directory = await temporaryDirectory();
     vi.stubEnv("CODEBASE_MEMORY_MCP_BIN", await fakeBinary(directory));
