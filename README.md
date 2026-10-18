@@ -1,5 +1,7 @@
 # pi-cbm
 
+Fork of [`alexykn/pi-cbm`](https://github.com/alexykn/pi-cbm) (MIT), maintained by [G4bar](https://github.com/G4bar). It adds `codebase-memory-mcp` 0.12.x compatibility, `cbm_`-prefixed tool names, and a hard version gate. Upstream credit and the original MIT license are kept.
+
 Pi extension that exposes [`codebase-memory-mcp`](https://github.com/DeusData/codebase-memory-mcp) as native Pi tools. `codebase-memory-mcp provides a fast local code graph. pi-cbm adds auto-indexing and adapts it for Pi agents in a way that is deliberately optimized for agent workflows and token saving.
 
 This package does not implement an MCP client. It uses `codebase-memory-mcp cli --json <tool> <args>` and registers the core tools directly with Pi. When a Pi session starts, it automatically indexes the current git root, or a safe non-git working directory when enabled, in full mode in the background, then periodically refreshes it so graph tools stay current.
@@ -55,6 +57,21 @@ Useful installer options from upstream:
 - `--ui` — install the graph visualization variant.
 - `--skip-config` — install the binary only, without configuring other agents.
 - `--dir=<path>` — install to a custom location.
+
+### Pinned install
+
+`install.sh` takes no version argument: it downloads `releases/latest/download`
+unless `CBM_DOWNLOAD_URL` points at one exact release. The installer still
+verifies the archive against that release's `checksums.txt`.
+
+```sh
+CBM_DOWNLOAD_URL=https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.12.1 \
+  bash ~/.local/bin/install.sh --skip-config
+```
+
+A bare `install.sh` run or the upstream `codebase-memory-mcp update` subcommand
+pulls whatever is newest, which may fall outside this fork's `0.12.x` range. On
+Linux the installer installs the `-portable` archive, not the plain one.
 
 ### Arch Linux AUR
 
@@ -143,7 +160,7 @@ Every tool is registered with the `cbm_` prefix by default so it cannot collide 
 
 Most tools accept optional `project`. When omitted, the extension infers it from indexed project roots matching Pi's current working directory. Agents should omit `project` for cwd/current-project work and provide it only when intentionally querying an external indexed project. A `project` value must be an indexed project name or a path (absolute, or relative to the current working directory); an unknown value fails with the indexed project list instead of falling back to a guessed name.
 
-Matching uses the longest indexed root that contains the working directory, so a git worktree or nested checkout that is not indexed itself resolves to the containing repo's graph. Index the worktree separately to query its own graph.
+Matching uses the longest indexed root that contains the working directory, so a git worktree or nested checkout that is not indexed itself resolves to the containing repo's graph. Index the worktree separately to query its own graph. A linked worktree that is auto-indexed becomes its own project with its own full index; after deleting the worktree, prune that project so it stops matching and stops using cache space: `codebase-memory-mcp cli list_projects` lists the names and `codebase-memory-mcp cli delete_project --project <name>` removes one.
 
 ## Commands
 

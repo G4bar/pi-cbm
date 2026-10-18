@@ -46,10 +46,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alexykn/pi-cbm.git"
+    "url": "git+https://github.com/G4bar/pi-cbm.git"
   },
   "bugs": {
-    "url": "https://github.com/alexykn/pi-cbm/issues"
+    "url": "https://github.com/G4bar/pi-cbm/issues"
   },
-  "homepage": "https://github.com/alexykn/pi-cbm#readme"
+  "homepage": "https://github.com/G4bar/pi-cbm#readme"
 }
