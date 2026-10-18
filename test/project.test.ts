@@ -62,22 +62,22 @@ describe("ProjectService.resolveProject", () => {
   it("fails loudly with the indexed projects when the cwd matches nothing", async () => {
     const { service } = serviceWith({ list: () => okPage([{ name: "other", root_path: "/work/other" }]) });
 
-    await expect(service.resolveProject(undefined, "/home/gabar")).rejects.toThrow(/cwd "\/home\/gabar", which has no git root/);
-    await expect(service.resolveProject(undefined, "/home/gabar")).rejects.toThrow(/indexed projects: other -> \/work\/other/);
-    await expect(service.resolveProject(undefined, "/home/gabar")).rejects.toThrow(/absolute path/);
+    await expect(service.resolveProject(undefined, "/home/user")).rejects.toThrow(/cwd "\/home\/user", which has no git root/);
+    await expect(service.resolveProject(undefined, "/home/user")).rejects.toThrow(/indexed projects: other -> \/work\/other/);
+    await expect(service.resolveProject(undefined, "/home/user")).rejects.toThrow(/absolute path/);
   });
 
   it("says so when no project is indexed at all", async () => {
     const { service } = serviceWith({ list: () => okPage([]) });
 
-    await expect(service.resolveProject(undefined, "/home/gabar")).rejects.toThrow(/no projects are indexed yet/);
+    await expect(service.resolveProject(undefined, "/home/user")).rejects.toThrow(/no projects are indexed yet/);
   });
 
   it("maps an explicit absolute path, with or without a trailing slash, to the project name", async () => {
     const { service } = serviceWith();
 
-    await expect(service.resolveProject("/work/repo/src", "/home/gabar")).resolves.toBe("repo");
-    await expect(service.resolveProject("/work/repo/", "/home/gabar")).resolves.toBe("repo");
+    await expect(service.resolveProject("/work/repo/src", "/home/user")).resolves.toBe("repo");
+    await expect(service.resolveProject("/work/repo/", "/home/user")).resolves.toBe("repo");
   });
 
   it("resolves a relative path against the cwd", async () => {
@@ -87,13 +87,13 @@ describe("ProjectService.resolveProject", () => {
   it("rejects an unknown project name with the actionable list, not symbol-not-found", async () => {
     let message = "";
     try {
-      await serviceWith().service.resolveProject("home-gabar", "/home/gabar");
+      await serviceWith().service.resolveProject("home-user", "/home/user");
       expect.unreachable("unknown project should throw");
     } catch (error) {
       message = (error as Error).message;
     }
 
-    expect(message).toMatch(/given value "home-gabar"/);
+    expect(message).toMatch(/given value "home-user"/);
     expect(message).toMatch(/indexed projects: repo -> \/work\/repo/);
     expect(message).toMatch(/absolute path/);
     expect(message).not.toMatch(/symbol not found/i);
@@ -103,7 +103,7 @@ describe("ProjectService.resolveProject", () => {
     const { service, listArgs } = serviceWith();
 
     await service.resolveProject(undefined, "/work/repo");
-    await service.resolveProject("/work/repo/src", "/home/gabar");
+    await service.resolveProject("/work/repo/src", "/home/user");
 
     expect(listArgs).toHaveLength(1);
   });
@@ -128,7 +128,7 @@ describe("ProjectService.resolveProject", () => {
       list: (_args, call) => (call === 1 ? okPage([]) : okPage([{ name: "repo", root_path: "/work/repo" }])),
     });
 
-    await expect(service.resolveProject("repo", "/home/gabar")).resolves.toBe("repo");
+    await expect(service.resolveProject("repo", "/home/user")).resolves.toBe("repo");
     expect(listArgs).toHaveLength(2);
   });
 
@@ -138,7 +138,7 @@ describe("ProjectService.resolveProject", () => {
       list: (_args, call) => (call === 1 ? okPage(firstPage, true) : okPage([{ name: "target", root_path: "/target" }])),
     });
 
-    await expect(service.resolveProject("target", "/home/gabar")).resolves.toBe("target");
+    await expect(service.resolveProject("target", "/home/user")).resolves.toBe("target");
     expect(listArgs).toHaveLength(2);
     expect(listArgs[0]).toMatchObject({ limit: 50, offset: 0 });
     expect(listArgs[1]).toMatchObject({ limit: 50, offset: 50 });
@@ -149,8 +149,8 @@ describe("ProjectService.resolveProject", () => {
       list: (_args, call) => (call === 1 ? errorResult("boom") : okPage([{ name: "repo", root_path: "/work/repo" }])),
     });
 
-    await expect(service.resolveProject("repo", "/home/gabar")).rejects.toThrow(/boom/);
-    await expect(service.resolveProject("repo", "/home/gabar")).resolves.toBe("repo");
+    await expect(service.resolveProject("repo", "/home/user")).rejects.toThrow(/boom/);
+    await expect(service.resolveProject("repo", "/home/user")).resolves.toBe("repo");
     expect(listArgs).toHaveLength(2);
   });
 
@@ -165,8 +165,8 @@ describe("ProjectService.resolveProject", () => {
     });
 
     const controller = new AbortController();
-    const aborted = service.resolveProject("repo", "/home/gabar", controller.signal);
-    const waiting = service.resolveProject("repo", "/home/gabar");
+    const aborted = service.resolveProject("repo", "/home/user", controller.signal);
+    const waiting = service.resolveProject("repo", "/home/user");
     controller.abort();
 
     await expect(aborted).rejects.toThrow(/cancelled/);
