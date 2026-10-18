@@ -81,7 +81,12 @@ export function registerLifecycle(pi: ExtensionAPI, services: CbmServices) {
   pi.on("before_agent_start", (event) => {
     const active = new Set(pi.getActiveTools());
     if (!selectedToolNames().some((name) => active.has(name))) return;
-    return { systemPrompt: event.systemPrompt + codebaseMemoryPrompt() };
+    // Mutate the named section instead of returning systemPrompt: a returned
+    // prompt is a forced override that Pi records without structured sections.
+    // The 0.75.x devDependency types predate `sections`; Pi >= 1 exposes it.
+    const options = event.systemPromptOptions as { sections?: Record<string, string> };
+    if (!options.sections) return;
+    options.sections["codebase_memory"] = codebaseMemoryPrompt();
   });
 
   pi.on("session_start", (_event, ctx) => {

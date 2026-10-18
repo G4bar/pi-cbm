@@ -38,20 +38,48 @@ afterEach(() => {
   version.warnings.length = 0;
 });
 
-describe("lifecycle prompt gate", () => {
-  it("appends the prompt only when a registered cbm tool is active", () => {
-    const active = setup(["cbm_search_graph"]);
-    const appended = active.handlers.get("before_agent_start")?.({ systemPrompt: "SYS" }, active.context) as { systemPrompt: string };
-    expect(appended.systemPrompt).toContain("Codebase-memory guidance");
+type PromptSectionsOptions = { systemPromptOptions: { sections: Record<string, string> } };
 
-    const inactive = setup(["read"]);
-    expect(inactive.handlers.get("before_agent_start")?.({ systemPrompt: "SYS" }, inactive.context)).toBeUndefined();
+function promptSections(): PromptSectionsOptions {
+  return { systemPromptOptions: { sections: {} } };
+}
+
+describe("lifecycle prompt gate", () => {
+  it("sets the codebase_memory section instead of forcing the system prompt", () => {
+    const { handlers, context } = setup(["cbm_search_graph"]);
+    const event = promptSections();
+    const result = handlers.get("before_agent_start")?.(event, context);
+
+    expect(result).toBeUndefined();
+    expect(Object.keys(event.systemPromptOptions.sections)).toEqual(["codebase_memory"]);
+    expect(event.systemPromptOptions.sections.codebase_memory).toContain("Codebase-memory guidance");
+  });
+
+  it("uses a section name Pi accepts", () => {
+    const { handlers, context } = setup(["cbm_search_graph"]);
+    const event = promptSections();
+    handlers.get("before_agent_start")?.(event, context);
+
+    const name = Object.keys(event.systemPromptOptions.sections)[0] as string;
+    expect(name).not.toBe("preamble");
+    expect(name).toMatch(/^[a-z][a-z0-9_-]*$/);
+  });
+
+  it("leaves the prompt alone when no registered cbm tool is active", () => {
+    const { handlers, context } = setup(["read"]);
+    const event = promptSections();
+
+    expect(handlers.get("before_agent_start")?.(event, context)).toBeUndefined();
+    expect(event.systemPromptOptions.sections).toEqual({});
   });
 
   it("ignores a cbm tool that the allowlist did not register", () => {
     vi.stubEnv("PI_CBM_TOOLS", "search_graph");
     const { handlers, context } = setup(["cbm_trace_path"]);
-    expect(handlers.get("before_agent_start")?.({ systemPrompt: "SYS" }, context)).toBeUndefined();
+    const event = promptSections();
+
+    expect(handlers.get("before_agent_start")?.(event, context)).toBeUndefined();
+    expect(event.systemPromptOptions.sections).toEqual({});
   });
 });
 
