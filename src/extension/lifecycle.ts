@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { consumeCbmVersionWarning } from "../cbm/version.js";
 import type { CbmServices } from "../pi-tools/definitions.js";
-import { selectedToolNames } from "../pi-tools/registry.js";
+import { selectedToolNames, unknownAllowlistEntries } from "../pi-tools/registry.js";
 import { codebaseMemoryPrompt } from "./prompt.js";
 
 const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 60_000;
@@ -42,6 +42,16 @@ export function registerLifecycle(pi: ExtensionAPI, services: CbmServices) {
   // The session generation that currently owns an in-flight index, used to keep
   // a single active index per session without leaking state across sessions.
   let inFlightGeneration: number | undefined;
+  // Compatibility and allowlist warnings are captured once and re-appended to
+  // every status line so the periodic refresh does not hide them.
+  let versionWarning: string | undefined;
+  let allowlistWarning: string | undefined;
+
+  function reportStatus(session: SessionResources, text: string) {
+    if (versionWarning === undefined) versionWarning = consumeCbmVersionWarning();
+    const warning = [allowlistWarning, versionWarning].filter(Boolean).join("; ");
+    session.ui.setStatus("codebase-memory", warning ? `${text} ⚠ ${warning}` : text);
+  }
 
   async function indexCurrentRepo(session: SessionResources, generation: number) {
     if (generation !== sessionGeneration) return; // stale session: skip
@@ -52,21 +62,19 @@ export function registerLifecycle(pi: ExtensionAPI, services: CbmServices) {
       const result = await services.projects.indexCurrentRepo(session.cwd, session.signal);
       if (generation !== sessionGeneration) return; // session changed mid-run
       if (result.status === "skipped") {
-        session.ui.setStatus("codebase-memory", `cbm skipped: ${result.reason}`);
+        reportStatus(session, `cbm skipped: ${result.reason}`);
         return;
       }
 
       const nodes = typeof result.nodes === "number" ? ` · ${result.nodes} nodes` : "";
       const edges = typeof result.edges === "number" ? ` · ${result.edges} edges` : "";
-      session.ui.setStatus("codebase-memory", `cbm ${result.project}${nodes}${edges}`);
+      reportStatus(session, `cbm ${result.project}${nodes}${edges}`);
     } catch (error) {
       if (generation !== sessionGeneration) return;
       const reason = error instanceof Error && error.message ? `: ${error.message}` : "";
-      session.ui.setStatus("codebase-memory", `cbm index failed${reason}`);
+      reportStatus(session, `cbm index failed${reason}`);
     } finally {
       if (inFlightGeneration === generation) inFlightGeneration = undefined;
-      const warning = generation === sessionGeneration ? consumeCbmVersionWarning() : undefined;
-      if (warning) session.ui.setStatus("codebase-memory", warning);
     }
   }
 
@@ -86,6 +94,9 @@ export function registerLifecycle(pi: ExtensionAPI, services: CbmServices) {
 
     const generation = sessionGeneration + 1;
     sessionGeneration = generation;
+
+    const unknown = unknownAllowlistEntries();
+    allowlistWarning = unknown.length > 0 ? `PI_CBM_TOOLS ignored unknown tool name(s): ${unknown.join(", ")}` : undefined;
 
     void indexCurrentRepo(session, generation);
     refreshTimer = setInterval(() => {

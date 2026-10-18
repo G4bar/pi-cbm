@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { normalizeCbmData } from "../src/cbm/normalize.js";
 import { OutputService } from "../src/domain/output.js";
-import { renderResult } from "../src/pi-tools/render.js";
+import { renderCall, renderResult } from "../src/pi-tools/render.js";
 
 const FIXTURE_DIR = new URL("./fixtures/cbm-0.12.1/", import.meta.url);
 
@@ -184,5 +184,15 @@ describe("compact detect_changes output on cbm 0.12 shapes", () => {
     );
 
     expect((result.details.data as Record<string, unknown>).index_freshness).toBe("index refreshed 0 s ago");
+  });
+});
+
+describe("tool render labels", () => {
+  it("shows the registered cbm_ name for calls and results", () => {
+    const call = renderCall("search_graph")({ query: "x" }, theme).render(200).join(" ");
+    expect(call).toContain("cbm_search_graph");
+
+    const result = renderResult("search_graph")({ details: { data: { total: 1 } } }, undefined, theme).render(200).join(" ");
+    expect(result).toContain("cbm_search_graph");
   });
 });

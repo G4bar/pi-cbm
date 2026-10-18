@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import type { CbmCallResult } from "../src/cbm/result.js";
 import type { CbmClient } from "../src/cbm/client.js";
 import { normalizeCbmData } from "../src/cbm/normalize.js";
@@ -13,6 +13,10 @@ const FIXTURE_DIR = new URL("./fixtures/cbm-0.12.1/", import.meta.url);
 const PROJECT = "tmp-cbm-fixture-repo";
 const ROOT = "/tmp/cbm-fixture-repo";
 const CTX: ToolExecutionContext = { cwd: ROOT };
+
+afterEach(() => {
+  delete process.env.PI_CBM_TOOLS;
+});
 
 function fixture(name: string): CbmCallResult {
   const envelope = JSON.parse(readFileSync(new URL(`${name}.json`, FIXTURE_DIR), "utf8")) as {
@@ -129,6 +133,29 @@ describe("TraceService on cbm 0.12 shapes", () => {
 
     const result = await service.trace({ function_name: "noSuchFunction", project: PROJECT }, CTX);
     expect(result.details.resolved_from).toBe("noSuchFunction");
+  });
+
+  it("prefixes the no-candidate trace hint with search_graph", async () => {
+    const service = traceService((tool) => {
+      if (tool === "trace_path") return fixture("trace_path.unknown");
+      if (tool === "search_graph") return { ok: true, data: { total: 0, has_more: false, results: [] }, rawText: "", stderr: "" };
+      throw new Error(`unexpected cbm tool: ${tool}`);
+    });
+
+    const result = await service.trace({ function_name: "noSuchFunction", project: PROJECT }, CTX);
+    expect(String((result.details.data as Record<string, unknown>).hint)).toContain("cbm_search_graph");
+  });
+
+  it("drops the search_graph trace hint when the allowlist excludes it", async () => {
+    process.env.PI_CBM_TOOLS = "trace_path";
+    const service = traceService((tool) => {
+      if (tool === "trace_path") return fixture("trace_path.unknown");
+      if (tool === "search_graph") return { ok: true, data: { total: 0, has_more: false, results: [] }, rawText: "", stderr: "" };
+      throw new Error(`unexpected cbm tool: ${tool}`);
+    });
+
+    const result = await service.trace({ function_name: "noSuchFunction", project: PROJECT }, CTX);
+    expect(String((result.details.data as Record<string, unknown>).hint)).toBe("No matching Function/Method candidates found.");
   });
 
   it("applies exclude_paths after locations are enriched, keeping unexcluded rows", async () => {

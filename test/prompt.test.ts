@@ -7,13 +7,15 @@ import { registerCodebaseMemoryTools } from "../src/pi-tools/registry.js";
 const BASE_NAMES = toolDefinitions.map((definition) => definition.name);
 const bareReference = (name: string) => new RegExp(`(?<!\\w)${name}(?!\\w)`);
 
-function registeredGuidelines(): string[] {
-  const guidelines: string[] = [];
+type RegisteredTool = { name: string; description: string; promptSnippet: string; promptGuidelines: string[] };
+
+function registeredTools(): RegisteredTool[] {
+  const tools: RegisteredTool[] = [];
   const pi = {
-    registerTool: (tool: { promptGuidelines: string[] }) => guidelines.push(...tool.promptGuidelines),
+    registerTool: (tool: RegisteredTool) => tools.push(tool),
   } as unknown as ExtensionAPI;
   registerCodebaseMemoryTools(pi, {} as CbmServices);
-  return guidelines;
+  return tools;
 }
 
 afterEach(() => {
@@ -31,14 +33,42 @@ describe("codebase-memory system prompt", () => {
     expect(prompt).toContain("cbm_get_architecture");
     expect(prompt).toContain("read-before-edit");
     expect(prompt).toContain("absolute repo path");
+    expect(prompt).not.toContain("ffgrep");
   });
 
   it("cross-references tools only by their prefixed names", () => {
+    const prompt = codebaseMemoryPrompt();
+    const tools = registeredTools();
+
     for (const name of BASE_NAMES) {
-      expect(codebaseMemoryPrompt(), name).not.toMatch(bareReference(name));
-      for (const guideline of registeredGuidelines()) {
-        expect(guideline, name).not.toMatch(bareReference(name));
+      expect(prompt, name).not.toMatch(bareReference(name));
+      for (const tool of tools) {
+        expect(tool.description, `${tool.name} description`).not.toMatch(bareReference(name));
+        expect(tool.promptSnippet, `${tool.name} snippet`).not.toMatch(bareReference(name));
+        for (const guideline of tool.promptGuidelines) {
+          expect(guideline, `${tool.name} guideline`).not.toMatch(bareReference(name));
+        }
       }
+    }
+  });
+
+  it("keeps per-tool guidelines consistent with the division of labor", () => {
+    const guidelines = registeredTools().flatMap((tool) => tool.promptGuidelines);
+
+    for (const guideline of guidelines) {
+      expect(guideline).not.toMatch(/prefer .*over raw file reads/i);
+      expect(guideline).not.toMatch(/falling back to read\/grep/i);
+      expect(guideline).not.toMatch(/search_code[^.]*exact literal/i);
+    }
+  });
+
+  it("mentions only registered tools when PI_CBM_TOOLS is set", () => {
+    process.env.PI_CBM_TOOLS = "search_graph";
+    const prompt = codebaseMemoryPrompt();
+
+    expect(prompt).toContain("cbm_search_graph");
+    for (const absent of ["cbm_trace_path", "cbm_detect_changes", "cbm_get_architecture", "cbm_search_and_read_symbols", "cbm_search_code"]) {
+      expect(prompt).not.toContain(absent);
     }
   });
 

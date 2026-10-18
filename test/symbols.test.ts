@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import type { CbmCallResult } from "../src/cbm/result.js";
 import type { CbmClient } from "../src/cbm/client.js";
 import { normalizeCbmData } from "../src/cbm/normalize.js";
@@ -54,6 +54,10 @@ function projectsResult(name: string, rootPath?: string): CbmCallResult {
 
 const searchByName = () => fixture("search_graph.name-pattern");
 
+afterEach(() => {
+  delete process.env.PI_CBM_TOOLS;
+});
+
 describe("SymbolService on cbm 0.12 shapes", () => {
   it("resolves a one-hit name to one candidate with a repo-relative location", async () => {
     const service = serviceWith(() => searchByName());
@@ -98,6 +102,23 @@ describe("SymbolService on cbm 0.12 shapes", () => {
     const result = await service.resolve({ name: "missing", project: PROJECT }, CTX);
 
     expect(result.details.data).toMatchObject({ error: "symbol not found", total_candidates: 0 });
+  });
+
+  it("prefixes the symbol-not-found hint with search_graph", async () => {
+    const service = serviceWith(() => ({ ok: true, data: { total: 0, has_more: false, results: [] }, rawText: "", stderr: "" }));
+    const result = await service.resolve({ name: "missing", project: PROJECT }, CTX);
+
+    expect(String((result.details.data as Record<string, unknown>).hint)).toContain("cbm_search_graph");
+  });
+
+  it("drops the search_graph hint when the allowlist excludes it", async () => {
+    process.env.PI_CBM_TOOLS = "resolve_symbol";
+    const service = serviceWith(() => ({ ok: true, data: { total: 0, has_more: false, results: [] }, rawText: "", stderr: "" }));
+    const result = await service.resolve({ name: "missing", project: PROJECT }, CTX);
+
+    const hint = String((result.details.data as Record<string, unknown>).hint);
+    expect(hint).not.toContain("search_graph");
+    expect(hint).toContain("broader query");
   });
 
   it("rewrites an absolute get_code_snippet file_path to repo-relative", async () => {

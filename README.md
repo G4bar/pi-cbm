@@ -136,8 +136,8 @@ Every tool is registered with the `cbm_` prefix by default so it cannot collide 
 
 ### Tool name prefix and allowlist
 
-- `PI_CBM_TOOL_PREFIX` overrides the prefix. Set it to an empty string to restore the legacy unprefixed names (upstream compatibility).
-- `PI_CBM_TOOLS` is an optional comma-separated allowlist of base names. When set, only those tools are registered; unset (or empty) registers all 13. Use it to cut tool-description tokens in sessions that allow everything.
+- `PI_CBM_TOOL_PREFIX` overrides the prefix. Set it to an empty string to restore the legacy unprefixed names (upstream compatibility). Legacy names collide with pi-lens (`read_symbol`, `symbol_search`), and Pi refuses to load two extensions that register the same tool name, so do not use an empty prefix alongside pi-lens.
+- `PI_CBM_TOOLS` is an optional comma-separated allowlist of base names (bare or `cbm_`-prefixed). When set, only those tools are registered; unset (or empty) registers all 13. Unknown entries are ignored with a warning, and an allowlist that matches nothing falls back to all tools. Use it to cut tool-description tokens in sessions that allow everything.
 - `PI_CBM_SKIP_VERSION_CHECK=1` disables the `codebase-memory-mcp --version` probe and its compatibility warning.
 
 Most tools accept optional `project`. When omitted, the extension infers it from indexed project roots matching Pi's current working directory. Agents should omit `project` for cwd/current-project work and provide it only when intentionally querying an external indexed project. A `project` value must be an indexed project name or a path (absolute, or relative to the current working directory); an unknown value fails with the indexed project list instead of falling back to a guessed name.

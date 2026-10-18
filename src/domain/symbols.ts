@@ -5,7 +5,7 @@ import { mapLimit } from "../shared/concurrency.js";
 import { clampInt } from "../shared/numbers.js";
 import { isRecord, numberProp, removeUndefined, stringProp } from "../shared/object.js";
 import { errorText, escapeRegExp, normalizeForMatch } from "../shared/strings.js";
-import { prefixedToolName } from "../shared/tool-prefix.js";
+import { isBaseToolRegistered, prefixedToolName } from "../shared/tool-prefix.js";
 import { OutputService, stripOutputControls } from "./output.js";
 import { ProjectService, type ToolExecutionContext } from "./project.js";
 
@@ -233,7 +233,9 @@ function renderSymbolResolution(resolution: SymbolResolution, params: Record<str
       query: resolution.query,
       total_candidates: 0,
       considered_candidates: resolution.consideredCandidates,
-      hint: `Try ${prefixedToolName("search_graph")} with a broader query or fewer disambiguators.`,
+      hint: isBaseToolRegistered("search_graph")
+        ? `Try ${prefixedToolName("search_graph")} with a broader query or fewer disambiguators.`
+        : "Try a broader query or fewer disambiguators.",
     };
   }
 
@@ -590,7 +592,9 @@ export class SymbolService {
         status: "not_found",
         query: resolution.query,
         considered_candidates: resolution.consideredCandidates,
-        hint: `Try ${prefixedToolName("search_graph")} with a broader query or fewer disambiguators.`,
+        hint: isBaseToolRegistered("search_graph")
+          ? `Try ${prefixedToolName("search_graph")} with a broader query or fewer disambiguators.`
+          : "Try a broader query or fewer disambiguators.",
         stderr: resolution.stderr,
       };
     }
@@ -660,7 +664,9 @@ export class SymbolService {
       return {
         data: {
           neighbors_error: errorText(trace.data),
-          neighbors_hint: `Direct neighbor lookup failed; use ${prefixedToolName("trace_path")} for explicit caller/callee tracing.`,
+          neighbors_hint: isBaseToolRegistered("trace_path")
+            ? `Direct neighbor lookup failed; use ${prefixedToolName("trace_path")} for explicit caller/callee tracing.`
+            : "Direct neighbor lookup failed.",
         },
         stderr: trace.stderr,
       };
@@ -679,7 +685,9 @@ export class SymbolService {
         callees,
         caller_count: callers?.length,
         callee_count: callees?.length,
-        neighbors_hint: `Neighbors are direct-only, compact, and source-free. Use ${prefixedToolName("trace_path")} for multi-hop workflow or impact tracing.`,
+        neighbors_hint: isBaseToolRegistered("trace_path")
+          ? `Neighbors are direct-only, compact, and source-free. Use ${prefixedToolName("trace_path")} for multi-hop workflow or impact tracing.`
+          : "Neighbors are direct-only, compact, and source-free.",
       }),
       stderr: trace.stderr,
     };

@@ -5,7 +5,7 @@ import { queryTimeoutMs } from "../cbm/timeouts.js";
 import { mapLimit } from "../shared/concurrency.js";
 import { isRecord, removeUndefined, stringProp } from "../shared/object.js";
 import { errorText, escapeRegExp } from "../shared/strings.js";
-import { prefixedToolName } from "../shared/tool-prefix.js";
+import { isBaseToolRegistered, prefixedToolName } from "../shared/tool-prefix.js";
 import { OutputService, stripOutputControls } from "./output.js";
 import { ProjectService, type ToolExecutionContext } from "./project.js";
 import { dedupeCandidates, hasLocation, searchCandidates, type SearchCandidate, SymbolService } from "./symbols.js";
@@ -96,7 +96,9 @@ export class TraceService {
         hint:
           candidates.length > 1
             ? `Multiple possible trace targets found. Retry ${prefixedToolName("trace_path")} with one exact qualified_name.`
-            : `No matching Function/Method candidates found. Use ${prefixedToolName("search_graph")} to find the exact qualified_name.`,
+            : isBaseToolRegistered("search_graph")
+              ? `No matching Function/Method candidates found. Use ${prefixedToolName("search_graph")} to find the exact qualified_name.`
+              : "No matching Function/Method candidates found.",
         function_name: functionName,
         candidates,
       },
