@@ -116,16 +116,16 @@ export CODEBASE_MEMORY_MCP_BIN="$HOME/.local/bin/codebase-memory-mcp"
 ## Install
 
 ```sh
-pi install npm:pi-cbm
+pi install git:github.com/G4bar/pi-cbm
 ```
 
 Or test for one run:
 
 ```sh
-pi -e npm:pi-cbm
+pi -e git:github.com/G4bar/pi-cbm
 ```
 
-To go back to the previous line, install `npm:pi-cbm@1.2.1` and use codebase-memory-mcp 0.9.x:
+The upstream npm package `npm:pi-cbm` 1.2.1 is still published, but it only works with `codebase-memory-mcp` 0.9.x:
 
 ```sh
 pi install npm:pi-cbm@1.2.1
