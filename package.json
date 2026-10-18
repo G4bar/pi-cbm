@@ -25,6 +25,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:live": "node --experimental-transform-types --disable-warning=ExperimentalWarning scripts/live-smoke.mjs",
     "check": "npm run typecheck",
     "prepack": "npm run check"
   },

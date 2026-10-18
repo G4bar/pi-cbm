@@ -152,3 +152,54 @@ Safety: the script always points `CBM_CACHE_DIR` at a fresh temp dir. The real
 cache (`$HOME/.cache/codebase-memory-mcp`) must be byte-identical before and
 after a capture run — check with `ls -la` on that directory (this is the
 regression check for a new cbm release too).
+
+## How to refresh fixtures for a new cbm release
+
+```sh
+scripts/capture-fixtures.sh /path/to/codebase-memory-mcp 0.13.0
+diff -ru test/fixtures/cbm-0.12.1 test/fixtures/cbm-0.13.0
+npm run typecheck && npm test
+```
+
+Read the diff, do not just check the exit code: a changed `cols`/`groups`/
+`isError` shape is a contract change that `src/cbm/normalize.ts` and its domain
+consumers must absorb, while new meta keys or different counts are usually
+noise. When the shapes did change, update the answers below, the range in
+`src/cbm/version.ts`, and the version table at the top of this file, then run
+the live smoke (`npm run smoke:live`, below) before deleting the old fixtures
+directory. Check the real cache before and after, as in the safety note above.
+
+## Live smoke against a real binary
+
+`npm run smoke:live` drives the extension's own services (`CbmClient`,
+`ProjectService`, the domain services) against a real binary through indexing,
+search, symbol resolution/reading, trace paths, queries and `detect_changes`.
+It is opt-in — vitest never runs it — and exits 0 with `SKIP` when `CBM_BIN` is
+unset.
+
+```sh
+CBM_BIN=/tmp/cbm0121/codebase-memory-mcp CBM_BIN_OLD=/tmp/cbm090/codebase-memory-mcp npm run smoke:live
+```
+
+`CBM_BIN_OLD` is optional; with it, the last check asserts the older binary
+fails with the too-old error. The script creates a temp cache dir and a temp
+`src/` copy of this repo, points `CBM_CACHE_DIR` at the former and deletes both
+at the end, so the real cache must stay unchanged.
+
+### The 0.12 background daemon
+
+0.12.x starts a background `codebase-memory-mcp --cbm-daemon-internal` on the
+first CLI call. Observed on 0.12.1 (linux-amd64):
+
+- One daemon per cache dir, with that dir's own `<project>.db` files; two runs
+  with different temp `CBM_CACHE_DIR`s did not share state (checked while
+  writing the smoke test, no cross-talk seen).
+- It outlives the CLI call by a few seconds before idle shutdown, and
+  re-creates its cache dir if that dir is deleted, so a bare `rm -rf` of the
+  temp dir can leave an empty `cache/` behind.
+- 0.12.1 has no `daemon` subcommand (`--help` lists only
+  install/uninstall/update/config), so the smoke script stops it itself: it
+  records the `--cbm-daemon-internal` PIDs before the run, then `SIGTERM`s the
+  new ones only, and only when `/proc/<pid>/environ` reports this run's own
+  `CBM_CACHE_DIR`.
+
