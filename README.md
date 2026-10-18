@@ -94,6 +94,21 @@ If the binary is not on `PATH`, set:
 export CODEBASE_MEMORY_MCP_BIN="$HOME/.local/bin/codebase-memory-mcp"
 ```
 
+### Supported versions
+
+This extension requires `codebase-memory-mcp` >= 0.12 and targets the 0.12.x CLI contract (`>=0.12.0 <0.13.0`). Captured/tested versions are 0.12.1 (target) and 0.9.0 (old-shape baseline); 0.10.x and 0.11.x were not tested, and the version gate rejects them conservatively. The 0.9.0 fixtures confirm the older shapes differ (`search_graph` object arrays instead of `cols`/`rows` groups, JSON-only `list_projects`), which this client does not parse; a version with those shapes cannot return useful results.
+
+On startup the extension probes the binary and fails loudly on an unsupported version instead of silently returning empty results:
+
+```text
+codebase-memory-mcp 0.10.0 is unsupported; pi-cbm requires 0.12.x (>=0.12.0 <0.13.0).
+Upgrade codebase-memory-mcp, or reinstall an earlier pi-cbm release (<= 1.2.1) to keep using it.
+```
+
+A newer untested major/minor continues with a one-time warning instead of failing. Set `PI_CBM_SKIP_VERSION_CHECK=1` to skip the probe (useful for packaged/vendored binaries and for tests).
+
+CLI output is normalized before it reaches the tools, so the 0.12 table shapes (`cols`/`rows`, `groups` with `qn_prefix`, `{cols,rows}` label tables, absolute `file` paths, tree-text `list_projects`) are converted to the object arrays and project resolution behavior the rest of the extension expects.
+
 ## Install
 
 ```sh
@@ -185,3 +200,13 @@ Give me the architecture overview.
 ```
 
 The extension indexes and periodically refreshes the current repo in the background, so the agent should usually go straight to `get_architecture`, `search_graph`, `get_code_snippet`, `trace_path`, `search_code`, or `query_graph` for structural code exploration. Administrative index operations remain available through the `codebase-memory-mcp` CLI when needed.
+
+## Development
+
+```sh
+npm install
+npm run typecheck
+npm test
+```
+
+Tests read recorded CLI output from `test/fixtures/` instead of running a real binary. To refresh the fixtures after a `codebase-memory-mcp` release, follow `test/fixtures/README.md`: `scripts/capture-fixtures.sh <binary> <version>` indexes a neutral copy of `src/` in a temp directory and records each case's stdout plus a `.meta.json` (invocation, args, exit code, stderr). Adding a new version directory means updating the fixture-driven expectations in the matching `test/*.test.ts` files.
