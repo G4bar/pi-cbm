@@ -145,6 +145,8 @@ Set `PI_CBM_MAX_CONCURRENT_INDEXES` to configure the machine-wide maximum number
 
 Set `PI_CBM_AUTO_REFRESH_INTERVAL_MS` to override the background refresh interval in milliseconds. It defaults to `60000` (60 seconds), so single-agent workflows do not have to wait for a long freshness TTL. `PI_CBM_CACHE_DIR` optionally overrides the coordination/cache directory and is forwarded to the upstream CLI as `CBM_CACHE_DIR`.
 
+Set `PI_CBM_FRESH_INDEX_TIMEOUT_MS` to bound how long a tool waits for a stale index to be refreshed before answering from the existing graph. `detect_changes` also re-indexes before diffing; keep this timeout small on large repositories so a first call after a long pause does not block for minutes.
+
 The legacy `CBM_MAX_CONCURRENT_INDEXES`, `CBM_AUTO_REFRESH_INTERVAL_MS`, and `CBM_CACHE_DIR` names remain supported for backwards compatibility. When both names are set, the `PI_CBM_*` value takes precedence.
 
 Notes:
