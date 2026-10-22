@@ -1,12 +1,12 @@
-# Fork maintenance: keep main rebased on the upstream project. Rewrites the fork's
-# history (force-with-lease) whenever this fork carries its own commits.
+# Fork maintenance: keep main rebased on the upstream project. Pushes with a
+# repo-scoped deploy key because GITHUB_TOKEN is refused for workflow-file changes.
 name: sync-upstream
 on:
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: sync-upstream
   cancel-in-progress: false
@@ -19,11 +19,19 @@ jobs:
           ref: main
           fetch-depth: 0
       - name: Rebase main onto upstream and push
+        env:
+          SYNC_KEY: ${{ secrets.SYNC_DEPLOY_KEY }}
         run: |
           set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SYNC_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/alexykn/pi-cbm.git
+          git remote add fork git@github.com:G4bar/pi-cbm.git
           git fetch upstream main
+          git fetch fork '+refs/heads/main:refs/remotes/fork/main'
           git rebase upstream/main
-          git push --force-with-lease origin HEAD:main
+          git push --force-with-lease fork HEAD:main
